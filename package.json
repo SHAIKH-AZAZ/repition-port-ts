@@ -1,0 +1,26 @@
+{
+  "name": "rcc-drawing-element-analyzer",
+  "version": "1.0.0",
+  "description": "RCC Drawing Element Analyzer — TypeScript port. Scans input/ PDFs, extracts BEAM/SLAB/COLUMN/FOOTING repetitions via OpenAI vision, writes per-file JSON reports.",
+  "type": "module",
+  "bin": {
+    "rcc-analyze": "dist/main.js"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "check": "tsx src/_check.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "openai": "^4.67.0",
+    "pdf-to-img": "^4.2.0",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { parseResponse, emptyResult, emptyExtraction } from "./aiExtractor.js";
-import { mergeTileExtractions, resolveElement, ownedRegion, normalizeLabel } from "./postProcess.js";
+import { mergeTileExtractions, resolveElement, normalizeLabel } from "./postProcess.js";
 import { parsePageList } from "./main.js";
 
 // ── parseResponse: new positions format ───────────────────────────────────────
@@ -51,16 +51,14 @@ assert.equal(normalizeLabel("B93"), "B93");
 assert.equal(resolveElement("LB1/B24/RMB1", "BEAM"), "BEAM");
 assert.equal(resolveElement("B25a/RMB1", "BEAM"), "BEAM");
 
-// ── ownedRegion: edges keep full extent, interior insets by overlap/2 ─────────
-const own = ownedRegion({ left: 0, top: 864, width: 1024, height: 1024 }, 4678, 6623, 160);
-assert.equal(own.left, 0); // page edge
-assert.equal(own.right, 944); // 1024 - 80
-assert.equal(own.top, 944); // 864 + 80
-assert.equal(own.bottom, 1808); // 864 + 1024 - 80
+// bare HB (hidden beam, no digits) is valid
+assert.equal(resolveElement("HB", "BEAM"), "BEAM");
+assert.equal(resolveElement("HB1", "BEAM"), "BEAM");
 
-// ── mergeTileExtractions: overlap dedupe via ownership ───────────────────────
+// ── mergeTileExtractions: cross-tile proximity dedupe ─────────────────────────
 // Two horizontally adjacent tiles; S4 sits in the shared overlap band and is
-// reported by BOTH tiles -> must be counted exactly once.
+// reported by BOTH tiles at (nearly) the same page position -> counted once.
+// Position error tolerance: anything within DEDUPE_RADIUS_PX merges.
 const tileA = { left: 0, top: 0, width: 1024, height: 1024 };
 const tileB = { left: 864, top: 0, width: 1024, height: 1024 };
 const exA = emptyExtraction();
@@ -90,6 +88,20 @@ exC.SLAB = [
 const merged2 = mergeTileExtractions([{ tile: tileA, extraction: exC }], 1024, 1024);
 assert.deepEqual(merged2.BEAM.labels, [{ label: "RMB1", count: 1 }]);
 assert.deepEqual(merged2.SLAB.labels, []);
+
+// far-apart occurrences from different tiles are NOT merged; same-tile pairs never merge
+const exD = emptyExtraction();
+exD.BEAM = [{ label: "B7", count: 2, positions: [{ x: 100, y: 100 }, { x: 200, y: 120 }] }];
+// tile-local distance ~104px < radius, but SAME tile -> both kept
+const exE = emptyExtraction();
+exE.BEAM = [{ label: "B7", count: 1, positions: [{ x: 500, y: 900 }] }];
+// page pos (1376, 921.6) — far from tile A's B7s -> kept
+const merged3 = mergeTileExtractions(
+  [{ tile: tileA, extraction: exD }, { tile: tileB, extraction: exE }],
+  4678,
+  1024,
+);
+assert.deepEqual(merged3.BEAM.labels, [{ label: "B7", count: 3 }]);
 
 // ── misc ──────────────────────────────────────────────────────────────────────
 assert.deepEqual(parsePageList("1,3,5-8,10"), [1, 3, 5, 6, 7, 8, 10]);

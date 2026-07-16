@@ -2,24 +2,26 @@
  * src/postProcess.ts
  * Deterministic cleanup of per-tile vision results:
  *
- * 1. OWNERSHIP FILTER — tiles overlap by TILE_OVERLAP px, so a label lying in
- *    the shared band is reported by two tiles. Each tile "owns" only its
- *    interior (inset by TILE_OVERLAP/2 on sides that have a neighbour);
- *    occurrences whose reported position falls outside the owned region are
- *    dropped — the neighbouring tile owns and counts them.
+ * 1. CROSS-TILE DEDUPE — tiles overlap by TILE_OVERLAP px, so a label lying
+ *    in the shared band is reported by two tiles. The same label reported by
+ *    two DIFFERENT tiles within DEDUPE_RADIUS_PX page-pixels is one physical
+ *    label seen twice — it is counted once. Same-tile occurrences are never
+ *    merged (the model counted genuinely distinct spots).
  *
  * 2. RE-BUCKETING — labels are re-assigned to the element type their prefix
  *    dictates (an "S13" reported under COLUMN is moved to SLAB). When a label
  *    is valid for the element the model chose (e.g. "P1" is both a perimeter
  *    beam and a pier), the model's choice is kept.
  *
- * 3. JUNK DROP — strings that match no element pattern ("BEAM", "RCC SLAB",
- *    "UP", bare grid letters, bare numbers) are discarded.
+ * 3. NORMALISATION / JUNK DROP — known misread patterns are corrected
+ *    (trailing "q" -> "g", dimension-merge artefacts dropped); strings that
+ *    match no element pattern ("BEAM", "RCC SLAB", "UP", bare grid letters,
+ *    bare numbers) are discarded.
  */
 
 import {
   STRUCTURAL_ELEMENTS,
-  TILE_OVERLAP,
+  DEDUPE_RADIUS_PX,
   NORMALIZE_TRAILING_Q,
   DROP_DIMENSION_MERGES,
 } from "./config.js";
@@ -39,9 +41,10 @@ const PATTERNS: Record<StructuralElement, RegExp[]> = {
       String.raw`^(?:\d?[A-Z]{1,3}_)?(?:RMB|PTBB|LPTB|FFB|TFB|STB|SBT|LBK|PB|LB|SB|CB|DB|TB|HB|MB|RB|AB|BB|BS|B)-?\d+(?:\.\d+)?[A-Za-z]?${SIZE}$`,
       "i",
     ),
-    // Compound / cross-referenced: B32a/RMB2, B39/LB1, LBK1+LBK12
+    // Compound / cross-referenced: B32a/RMB2, B39/LB1, LB1/B24/RMB1, LBK1+LBK12
     /^[A-Za-z]{1,4}\d+(?:\.\d+)?[A-Za-z]?(?:[/+][A-Za-z]{1,4}\d+[A-Za-z]?)+$/,
     /^RR$/,
+    /^HB\d*$/, // hidden beams may be labelled bare "HB" (no digits)
     /^P-?\d+[A-Za-z]?$/, // perimeter beam (also matches pier under COLUMN)
   ],
   SLAB: [new RegExp(String.raw`^(?:FS|RS|SQ|SM|STB|S)-?\d+[A-Za-z]?${SIZE}$`)],
@@ -112,32 +115,7 @@ export function resolveElement(
   return null;
 }
 
-// ── Ownership filter ──────────────────────────────────────────────────────────
-interface OwnedRegion {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
-
-/**
- * Region of the page (in full-res pixels) that this tile exclusively owns:
- * the tile inset by half the overlap on every side that has a neighbour.
- */
-export function ownedRegion(
-  tile: Pick<PageTile, "left" | "top" | "width" | "height">,
-  pageWidth: number,
-  pageHeight: number,
-  overlap: number = TILE_OVERLAP,
-): OwnedRegion {
-  const half = overlap / 2;
-  return {
-    left: tile.left === 0 ? 0 : tile.left + half,
-    top: tile.top === 0 ? 0 : tile.top + half,
-    right: tile.left + tile.width >= pageWidth ? pageWidth : tile.left + tile.width - half,
-    bottom: tile.top + tile.height >= pageHeight ? pageHeight : tile.top + tile.height - half,
-  };
-}
+// ── Cross-tile dedupe merge ───────────────────────────────────────────────────
 
 /** One tile's extraction together with its geometry. */
 export interface TileResult {
@@ -145,25 +123,41 @@ export interface TileResult {
   extraction: TileExtraction;
 }
 
+interface PlacedOccurrence {
+  px: number;
+  py: number;
+  tileIdx: number;
+}
+
 /**
- * Merge per-tile extractions into one page-level ElementResult:
- * ownership-filter positions, re-bucket labels, drop junk, sum counts.
+ * Merge per-tile extractions into one page-level ElementResult.
+ *
+ * All occurrences are converted to page coordinates. For each label, an
+ * occurrence is dropped when an already-accepted occurrence of the SAME label
+ * from a DIFFERENT tile lies within DEDUPE_RADIUS_PX — that is the same
+ * physical label seen through the tile overlap. Occurrences without position
+ * info are added as raw counts (no dedupe possible).
  */
 export function mergeTileExtractions(
   tileResults: TileResult[],
-  pageWidth: number,
-  pageHeight: number,
+  _pageWidth: number,
+  _pageHeight: number,
 ): ElementResult {
-  const counts: Record<StructuralElement, Record<string, number>> = {
+  // element -> label -> collected occurrences
+  const placed: Record<StructuralElement, Record<string, PlacedOccurrence[]>> = {
+    BEAM: {},
+    SLAB: {},
+    COLUMN: {},
+    FOOTING: {},
+  };
+  const blind: Record<StructuralElement, Record<string, number>> = {
     BEAM: {},
     SLAB: {},
     COLUMN: {},
     FOOTING: {},
   };
 
-  for (const { tile, extraction } of tileResults) {
-    const owned = ownedRegion(tile, pageWidth, pageHeight);
-
+  tileResults.forEach(({ tile, extraction }, tileIdx) => {
     for (const modelElement of STRUCTURAL_ELEMENTS) {
       for (const occ of extraction[modelElement] ?? []) {
         const label = normalizeLabel(occ.label);
@@ -171,29 +165,45 @@ export function mergeTileExtractions(
         const element = resolveElement(label, modelElement);
         if (!element) continue; // junk label
 
-        let kept: number;
         if (occ.positions.length > 0) {
-          kept = occ.positions.filter((p) => {
-            const px = tile.left + (p.x / 1000) * tile.width;
-            const py = tile.top + (p.y / 1000) * tile.height;
-            return px >= owned.left && px < owned.right && py >= owned.top && py < owned.bottom;
-          }).length;
+          const list = (placed[element][label] ??= []);
+          for (const p of occ.positions) {
+            list.push({
+              px: tile.left + (p.x / 1000) * tile.width,
+              py: tile.top + (p.y / 1000) * tile.height,
+              tileIdx,
+            });
+          }
         } else {
-          // No position info — keep the raw count (may double-count overlap).
-          kept = occ.count;
-        }
-        if (kept > 0) {
-          counts[element][label] = (counts[element][label] ?? 0) + kept;
+          blind[element][label] = (blind[element][label] ?? 0) + occ.count;
         }
       }
     }
-  }
+  });
 
   const result = {} as ElementResult;
   for (const element of STRUCTURAL_ELEMENTS) {
-    const labels: LabelEntry[] = Object.keys(counts[element])
+    const counts: Record<string, number> = {};
+
+    for (const [label, occs] of Object.entries(placed[element])) {
+      const accepted: PlacedOccurrence[] = [];
+      for (const o of occs) {
+        const isDuplicate = accepted.some(
+          (a) =>
+            a.tileIdx !== o.tileIdx &&
+            Math.hypot(a.px - o.px, a.py - o.py) < DEDUPE_RADIUS_PX,
+        );
+        if (!isDuplicate) accepted.push(o);
+      }
+      counts[label] = accepted.length;
+    }
+    for (const [label, n] of Object.entries(blind[element])) {
+      counts[label] = (counts[label] ?? 0) + n;
+    }
+
+    const labels: LabelEntry[] = Object.keys(counts)
       .sort()
-      .map((label) => ({ label, count: counts[element][label] }));
+      .map((label) => ({ label, count: counts[label] }));
     result[element] = { total_distinct: labels.length, labels };
   }
   return result;

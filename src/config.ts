@@ -29,7 +29,7 @@ export type StructuralElement = (typeof STRUCTURAL_ELEMENTS)[number];
 
 // ── PDF Processing ────────────────────────────────────────────────────────────
 // Resolution for rendering PDF pages to images (higher = more detail for OCR)
-export const PDF_DPI = 200;
+export const PDF_DPI = 400;
 
 // ── Tiling ────────────────────────────────────────────────────────────────────
 // Large sheets (A1/A0) are split into overlapping high-res tiles instead of
@@ -38,6 +38,10 @@ export const PDF_DPI = 200;
 // side, so tiles near that size are sent essentially loss-free.
 export const TILE_SIZE = 1024; // px, tile width/height at PDF_DPI
 export const TILE_OVERLAP = 160; // px shared between neighbouring tiles (> label size)
+// Same label reported by two DIFFERENT tiles within this page-pixel distance
+// is one physical label seen twice through the overlap. Must be larger than
+// the model's position estimation error, smaller than real label spacing.
+export const DEDUPE_RADIUS_PX = 160;
 export const TILE_CONCURRENCY = 4; // parallel vision requests per page
 // Tiles whose pixel stddev is below this are treated as blank and skipped.
 export const BLANK_TILE_STD_THRESHOLD = 1.5;

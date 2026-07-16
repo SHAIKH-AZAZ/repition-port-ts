@@ -31,8 +31,32 @@ export type StructuralElement = (typeof STRUCTURAL_ELEMENTS)[number];
 // Resolution for rendering PDF pages to images (higher = more detail for OCR)
 export const PDF_DPI = 200;
 
-// Maximum image dimension (px) to keep API payload manageable
-export const MAX_IMAGE_DIM = 2048;
+// ── Tiling ────────────────────────────────────────────────────────────────────
+// Large sheets (A1/A0) are split into overlapping high-res tiles instead of
+// being downscaled to one image — downscaling made 2–3 mm labels illegible.
+// OpenAI "high detail" caps the useful resolution around 768 px on the short
+// side, so tiles near that size are sent essentially loss-free.
+export const TILE_SIZE = 1024; // px, tile width/height at PDF_DPI
+export const TILE_OVERLAP = 160; // px shared between neighbouring tiles (> label size)
+export const TILE_CONCURRENCY = 4; // parallel vision requests per page
+// Tiles whose pixel stddev is below this are treated as blank and skipped.
+export const BLANK_TILE_STD_THRESHOLD = 1.5;
+
+// Max tokens for the model's JSON reply. Dense pages can have 100+ labels;
+// a low cap truncates the JSON mid-array and the page silently returns empty.
+export const MAX_COMPLETION_TOKENS = 4096;
+
+// ── Label normalisation (post-processing) ─────────────────────────────────────
+// CAD label suffixes practically never use "q"; the vision model misreads
+// stroke-drawn "g"/"a" as "q". When true, a trailing "q" after digits is
+// rewritten to "g" (e.g. B32q -> B32g).
+export const NORMALIZE_TRAILING_Q = true;
+
+// Vision models sometimes merge an adjacent dimension number into a label
+// ("B50a" next to "750" becomes "B750a"). When true, beam labels whose
+// number is >= 300 and a multiple of 25 (300, 450, 750, 1050...) are treated
+// as dimension-merge artefacts and dropped.
+export const DROP_DIMENSION_MERGES = true;
 
 // ── Output ────────────────────────────────────────────────────────────────────
 export const DEFAULT_OUTPUT_SUFFIX = "_elements.json";
@@ -41,8 +65,19 @@ export const DEFAULT_OUTPUT_SUFFIX = "_elements.json";
 // Sent with each page image to the OpenAI vision model.
 // The model must reply ONLY with valid JSON matching the schema below.
 export const EXTRACTION_PROMPT = `You are an expert RCC/civil structural engineer and drawing interpreter.
-Your task is to extract ALL structural element labels from this drawing page with high precision,
-AND count how many times each label physically appears on the page.
+Your task is to extract ALL structural element labels from this drawing image with high precision,
+AND count how many times each label physically appears in it.
+
+================================================================
+TILE CONTEXT — THIS IMAGE IS A CROP OF A LARGER SHEET
+================================================================
+This image is one tile cropped from a larger drawing sheet. Neighbouring
+tiles overlap slightly, so:
+  - IGNORE any label that is clipped / cut off by the image border —
+    it will be read completely in the adjacent tile.
+  - Count ONLY labels that are FULLY visible inside this image.
+  - The tile may legitimately contain nothing (empty margin, hatching,
+    dimension lines only). In that case return all zeros — do NOT invent labels.
 
 ================================================================
 IMPORTANT — WHAT TO READ (AND WHAT TO IGNORE)
@@ -91,6 +126,14 @@ Recognise ANY label that denotes a beam, including:
                          UGF_B97a(450), SGF_B43(450x600), LPTB-5(900x550)
   Grouped (split each) : (B1,B2), (B1+B2)  -> record "B1" and "B2" separately
   Compound (keep whole): LBK1+LBK12  -> record as single label "LBK1+LBK12"
+  Slash chains (keep whole): B23c/RMB1, B25a/RMB1, LB1/B24/RMB1
+                         -> ONE label, the full chain exactly as printed.
+                         The segments may be drawn in DIFFERENT COLOURS or
+                         layers (e.g. "LB1/" cyan, "B24" yellow, "/RMB1" cyan)
+                         but they sit on one line over one beam: read the whole
+                         run of text joined by "/" as a single label. NEVER
+                         report "LB1", "B24" or "RMB1" separately when they are
+                         connected by "/".
   Label with size      : B1(300x600), PB1(300x600) — include the size string
 
   Key prefixes: B, PB, LB, SB, CB, DB, TB, HB, MB, RB, AB, BB, bs,
@@ -148,32 +191,49 @@ EXTRACTION RULES
 ================================================================
 1. Extract the EXACT label string as printed — preserve case, suffixes (a/A),
    dimension strings (300x600), floor prefixes (1F_, MF_, LGF_), hyphens, etc.
+   CHARACTER-ACCURACY WARNINGS (labels are stroke-drawn CAD text):
+   - Suffix letters are usually a, b, c, d, e, f, g, h. A letter that looks
+     like "q" is almost always a misread "g" or "a" — look again.
+   - Do NOT merge nearby standalone dimension numbers (450, 750, 1050...) into
+     a label. "B50a" next to a "750" dimension is "B50a", never "B750a".
+   - Standalone words are NOT labels: "BEAM", "RCC SLAB", "UP", "DN", "TYP",
+     "C", "SB", grid letters (A, B, G, H...) and bare numbers must be ignored.
 2. If a size is appended to the label e.g. B1(300x600), include the full string.
 3. Grouped labels like (B1,B2) or (B1+B2) -> split into individual labels.
 4. Compound labels like LBK1+LBK12 -> keep as ONE label string.
-5. For each distinct label, count HOW MANY TIMES it physically appears on this
-   page in the layout drawing. This is the "count" field inside each label object.
-   Example: if B1 is drawn in 5 places on this page, its count=5.
+5. For each distinct label, count HOW MANY TIMES it physically appears in this
+   image in the layout drawing. This is the "count" field inside each label object.
+   Example: if B1 is drawn in 5 places in this image, its count=5.
+   Count by actually locating each occurrence — do NOT estimate or round.
 6. total_distinct = number of unique label strings found for that element type.
 7. If an element type has no labels on this page -> total_distinct=0, labels=[].
 8. Do NOT guess or hallucinate. Only report what is explicitly visible/legible.
-9. Return ONLY a valid JSON object — no explanation, no markdown fences.
+9. CLASSIFY STRICTLY BY PREFIX. Never place a label under the wrong element:
+   - "S" + digits (S1, S13, S23...)          -> ALWAYS SLAB, never COLUMN.
+   - "B"/"RMB"/"LB" + digits (B5a, RMB1...)  -> ALWAYS BEAM, never SLAB.
+   - "C" + digits (C1, C12...)               -> COLUMN (unless in a footing schedule).
+10. For EVERY occurrence, also report its approximate centre position within
+    THIS image as {"x": <0-1000>, "y": <0-1000>} — x=0 is the left edge,
+    x=1000 the right edge, y=0 the top, y=1000 the bottom. The number of
+    positions MUST equal "count". Positions are used to de-duplicate the
+    overlap between tiles, so estimate them as carefully as you can.
+11. Return ONLY a valid JSON object — no explanation, no markdown fences.
 
 ================================================================
 REQUIRED OUTPUT  (strict JSON, no extra text outside the braces)
 ================================================================
 {
-  "BEAM":    {"total_distinct": <int>, "labels": [{"label": <str>, "count": <int>}, ...]},
-  "SLAB":    {"total_distinct": <int>, "labels": [{"label": <str>, "count": <int>}, ...]},
-  "COLUMN":  {"total_distinct": <int>, "labels": [{"label": <str>, "count": <int>}, ...]},
-  "FOOTING": {"total_distinct": <int>, "labels": [{"label": <str>, "count": <int>}, ...]}
+  "BEAM":    {"labels": [{"label": <str>, "count": <int>, "positions": [{"x": <int>, "y": <int>}, ...]}, ...]},
+  "SLAB":    {"labels": [...]},
+  "COLUMN":  {"labels": [...]},
+  "FOOTING": {"labels": [...]}
 }
 
-Example for a page with beams B1 appearing 5 times and B2 appearing 2 times:
+Example for an image with beam B1 appearing 2 times and slab S4 once:
 {
-  "BEAM":    {"total_distinct": 2, "labels": [{"label": "B1", "count": 5}, {"label": "B2", "count": 2}]},
-  "SLAB":    {"total_distinct": 0, "labels": []},
-  "COLUMN":  {"total_distinct": 0, "labels": []},
-  "FOOTING": {"total_distinct": 0, "labels": []}
+  "BEAM":    {"labels": [{"label": "B1", "count": 2, "positions": [{"x": 120, "y": 340}, {"x": 700, "y": 855}]}]},
+  "SLAB":    {"labels": [{"label": "S4", "count": 1, "positions": [{"x": 480, "y": 500}]}]},
+  "COLUMN":  {"labels": []},
+  "FOOTING": {"labels": []}
 }
 `;

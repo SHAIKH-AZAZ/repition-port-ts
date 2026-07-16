@@ -11,8 +11,14 @@ import {
   OPENAI_MODEL,
   EXTRACTION_PROMPT,
   STRUCTURAL_ELEMENTS,
+  MAX_COMPLETION_TOKENS,
 } from "./config.js";
-import type { ElementResult, LabelEntry } from "./types.js";
+import type {
+  ElementResult,
+  OccurrenceEntry,
+  Position,
+  TileExtraction,
+} from "./types.js";
 
 // ── Client ──────────────────────────────────────────────────────────────────
 let _client: OpenAI | null = null;
@@ -30,7 +36,7 @@ export function getClient(): OpenAI {
   return _client;
 }
 
-// ── Empty page result ─────────────────────────────────────────────────────────
+// ── Empty results ─────────────────────────────────────────────────────────────
 export function emptyResult(): ElementResult {
   const result = {} as ElementResult;
   for (const el of STRUCTURAL_ELEMENTS) {
@@ -39,13 +45,34 @@ export function emptyResult(): ElementResult {
   return result;
 }
 
+export function emptyExtraction(): TileExtraction {
+  const result = {} as TileExtraction;
+  for (const el of STRUCTURAL_ELEMENTS) {
+    result[el] = [];
+  }
+  return result;
+}
+
 // ── JSON extraction from model response ───────────────────────────────────────
+/** Parse one raw position object into 0–1000 tile units, or null if invalid. */
+function parsePosition(item: unknown): Position | null {
+  if (item === null || typeof item !== "object" || Array.isArray(item)) return null;
+  const obj = item as Record<string, unknown>;
+  const x = Number(obj.x);
+  const y = Number(obj.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return {
+    x: Math.min(1000, Math.max(0, Math.round(x))),
+    y: Math.min(1000, Math.max(0, Math.round(y))),
+  };
+}
+
 /**
  * Extract the JSON object from the model's response text. Handles markdown
- * code fences. Expects per-label objects `{"label":"B1","count":5}` but falls
- * back to bare strings `["B1","B2"]` for backward compatibility.
+ * code fences. Expects `{"label":"B1","count":2,"positions":[{"x":..,"y":..}]}`;
+ * falls back to count-only objects and bare strings for robustness.
  */
-export function parseResponse(raw: string): ElementResult {
+export function parseResponse(raw: string): TileExtraction {
   // Strip markdown fences if present
   let text = raw.trim();
   text = text.replace(/^```(?:json)?\s*/i, "");
@@ -58,7 +85,7 @@ export function parseResponse(raw: string): ElementResult {
     throw new Error(`Model returned non-JSON response: ${JSON.stringify(raw)}`);
   }
 
-  const result = emptyResult();
+  const result = emptyExtraction();
   for (const element of STRUCTURAL_ELEMENTS) {
     const entry = data[element];
     if (entry === undefined || entry === null || typeof entry !== "object") {
@@ -67,30 +94,38 @@ export function parseResponse(raw: string): ElementResult {
     const entryObj = entry as Record<string, unknown>;
     const rawLabels = Array.isArray(entryObj.labels) ? entryObj.labels : [];
 
-    const normalised: LabelEntry[] = [];
+    const normalised: OccurrenceEntry[] = [];
     for (const item of rawLabels) {
       if (item !== null && typeof item === "object" && !Array.isArray(item)) {
-        // New format: {"label": "B1", "count": 5}
         const obj = item as Record<string, unknown>;
         const lbl = String(obj.label ?? "").trim();
-        const cnt = Number.parseInt(String(obj.count ?? 1), 10);
-        if (lbl) {
-          normalised.push({ label: lbl, count: Number.isNaN(cnt) ? 1 : cnt });
+        if (!lbl) continue;
+
+        const positions: Position[] = [];
+        if (Array.isArray(obj.positions)) {
+          for (const p of obj.positions) {
+            const pos = parsePosition(p);
+            if (pos) positions.push(pos);
+          }
         }
+        const cntRaw = Number.parseInt(String(obj.count ?? (positions.length || 1)), 10);
+        // When positions are given, they are the source of truth for count.
+        const count = positions.length > 0
+          ? positions.length
+          : Number.isNaN(cntRaw) || cntRaw < 1
+            ? 1
+            : cntRaw;
+        normalised.push({ label: lbl, count, positions });
       } else if (typeof item === "string") {
-        // Old flat-string fallback: treat count as 1
+        // Old flat-string fallback: treat count as 1, no position info
         const lbl = item.trim();
         if (lbl) {
-          normalised.push({ label: lbl, count: 1 });
+          normalised.push({ label: lbl, count: 1, positions: [] });
         }
       }
     }
 
-    const totalDistinctRaw = Number.parseInt(String(entryObj.total_distinct ?? normalised.length), 10);
-    result[element] = {
-      total_distinct: Number.isNaN(totalDistinctRaw) ? normalised.length : totalDistinctRaw,
-      labels: normalised,
-    };
+    result[element] = normalised;
   }
 
   return result;
@@ -108,7 +143,7 @@ export async function extractElementsFromImage(
   base64Png: string,
   maxRetries = 3,
   retryDelaySec = 5.0,
-): Promise<ElementResult> {
+): Promise<TileExtraction> {
   const client = getClient();
   const imageUrl = `data:image/png;base64,${base64Png}`;
 
@@ -128,7 +163,7 @@ export async function extractElementsFromImage(
       const response = await client.chat.completions.create({
         model: OPENAI_MODEL,
         messages,
-        max_tokens: 1024,
+        max_tokens: MAX_COMPLETION_TOKENS,
         temperature: 0, // deterministic output
       });
       const rawText = response.choices[0]?.message?.content ?? "";
@@ -154,7 +189,7 @@ export async function extractElementsFromImage(
       } else if (exc instanceof Error && exc.message.startsWith("Model returned non-JSON")) {
         // Bad JSON from model — log and return empty rather than crash
         console.log(`  [Page ${pageNumber}] WARNING: Could not parse model response: ${exc.message}`);
-        return emptyResult();
+        return emptyExtraction();
       } else {
         throw exc;
       }

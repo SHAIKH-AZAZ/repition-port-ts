@@ -10,6 +10,22 @@ export interface LabelEntry {
   count: number;
 }
 
+/** Approximate centre of one physical occurrence, in 0–1000 tile units. */
+export interface Position {
+  x: number;
+  y: number;
+}
+
+/** One label as extracted from a single tile, with occurrence positions. */
+export interface OccurrenceEntry {
+  label: string;
+  count: number;
+  positions: Position[];
+}
+
+/** Raw per-tile extraction: element -> occurrence entries. */
+export type TileExtraction = Record<StructuralElement, OccurrenceEntry[]>;
+
 export interface ElementEntry {
   total_distinct: number;
   labels: LabelEntry[];

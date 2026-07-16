@@ -31,9 +31,13 @@ import {
   DEFAULT_OUTPUT_SUFFIX,
   INPUT_DIR,
   OUTPUT_DIR,
+  TILE_CONCURRENCY,
 } from "./config.js";
-import { pdfToPageImages, getPageCount } from "./pdfProcessor.js";
+import { pdfToPageTiles, getPageCount } from "./pdfProcessor.js";
+import type { PageTile } from "./pdfProcessor.js";
 import { extractElementsFromImage, emptyResult } from "./aiExtractor.js";
+import { mergeTileExtractions } from "./postProcess.js";
+import type { TileResult } from "./postProcess.js";
 import type { PageError, PageResult, Summary } from "./types.js";
 
 // ── Aggregation ───────────────────────────────────────────────────────────────
@@ -88,14 +92,36 @@ async function analyzePdf(
   const errors: PageError[] = [];
 
   let done = 0;
-  for await (const [pageNum, b64Png] of pdfToPageImages(pdfPath)) {
+  for await (const pageTiles of pdfToPageTiles(pdfPath)) {
+    const pageNum = pageTiles.page;
     if (!pagesToProcessSet.has(pageNum)) {
       continue;
     }
 
-    process.stderr.write(`\rPage ${pageNum} [${done}/${pagesToProcess.length}]`);
+    const skipped = pageTiles.gridTiles - pageTiles.tiles.length;
+    process.stderr.write(
+      `\rPage ${pageNum}: ${pageTiles.tiles.length} tile(s) to analyse` +
+        (skipped ? ` (${skipped} blank skipped)` : "") +
+        "\n",
+    );
+
     try {
-      const elements = await extractElementsFromImage(pageNum, b64Png);
+      const tileResults: TileResult[] = await mapWithConcurrency(
+        pageTiles.tiles,
+        TILE_CONCURRENCY,
+        async (tile: PageTile, i: number) => {
+          const extraction = await extractElementsFromImage(pageNum, tile.b64);
+          process.stderr.write(
+            `\r  Page ${pageNum} tiles [${i + 1}/${pageTiles.tiles.length}]`,
+          );
+          return { tile, extraction };
+        },
+      );
+      const elements = mergeTileExtractions(
+        tileResults,
+        pageTiles.pageWidth,
+        pageTiles.pageHeight,
+      );
       perPageResults.push({ page: pageNum, elements });
     } catch (exc) {
       const errMsg = exc instanceof Error ? exc.message : String(exc);
@@ -105,7 +131,7 @@ async function analyzePdf(
       perPageResults.push({ page: pageNum, elements: emptyResult(), error: errMsg });
     } finally {
       done += 1;
-      process.stderr.write(`\rAnalysing [${done}/${pagesToProcess.length}]`);
+      process.stderr.write(`\rAnalysed page ${pageNum} [${done}/${pagesToProcess.length}]\n`);
     }
   }
   process.stderr.write("\n");
@@ -144,6 +170,24 @@ async function analyzePdf(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Map over items with at most `limit` promises in flight; preserves order. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
 function rangeInclusive(start: number, end: number): number[] {
   const out: number[] = [];

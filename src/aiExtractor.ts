@@ -8,6 +8,7 @@ import OpenAI from "openai";
 
 import {
   OPENAI_API_KEY,
+  OPENAI_BASE_URL,
   OPENAI_MODEL,
   EXTRACTION_PROMPT,
   STRUCTURAL_ELEMENTS,
@@ -28,10 +29,20 @@ export function getClient(): OpenAI {
     if (!OPENAI_API_KEY) {
       throw new Error(
         "OPENAI_API_KEY is not set. " +
-          "Create a .env file with OPENAI_API_KEY=sk-... or set the env variable.",
+          "Create a .env file with OPENAI_API_KEY=sk-... (or an OpenRouter " +
+          "sk-or-v1-... key together with OPENAI_BASE_URL).",
       );
     }
-    _client = new OpenAI({ apiKey: OPENAI_API_KEY });
+    _client = new OpenAI({
+      apiKey: OPENAI_API_KEY,
+      // Any OpenAI-compatible endpoint, e.g. OpenRouter:
+      // https://openrouter.ai/api/v1 — empty string means api.openai.com.
+      ...(OPENAI_BASE_URL ? { baseURL: OPENAI_BASE_URL } : {}),
+      // Optional OpenRouter attribution headers (harmless for OpenAI).
+      defaultHeaders: {
+        "X-Title": "RCC Drawing Element Analyzer",
+      },
+    });
   }
   return _client;
 }

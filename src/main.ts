@@ -22,6 +22,7 @@
  */
 
 import { parseArgs } from "node:util";
+import { fileURLToPath } from "node:url";
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 
@@ -247,7 +248,13 @@ async function main(): Promise<void> {
 }
 
 // Only run when executed directly (mirrors Python's `if __name__ == "__main__"`).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare real filesystem paths — string-comparing URLs breaks when the path
+// contains spaces (encoded as %20 in import.meta.url).
+const isDirectRun =
+  process.argv[1] &&
+  path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
+
+if (isDirectRun) {
   main().catch((exc) => {
     console.error(exc);
     process.exit(1);

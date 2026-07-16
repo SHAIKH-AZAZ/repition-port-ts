@@ -1,0 +1,264 @@
+                                                                                                                                                                                                                                                                                                                                                                                               GENERAL NOTES :-
+
+                                                        16 15                                            14 13                      12 11                             10 9                               8 7                                  6 5                            4 3                                                        2             1
+
+
+                                                                                                                                                                                                600 MM TH. BASEMENT
+                                                                                                                                                                                                  DIAPHRAGM WALL
+
+
+                               S1                             S2                     S2                           S3                                                                                                   S3                               S3                           S2                              S2                               S1
+                                                                                                                                             S3                               S6
+
+
+
+                                                                                                                                                                                                                             REFER SEPARATE DWG.
+                                                                                                                                                                                                             S7
+ Y
+                               S1                             S5                     S5                           S4                         S4                                                                                                         S4                              S5                           S5                               S1
+                                                                                                                                                                                                                    S4
+
+
+
+
+                                                                                                                                                                                                                                                                                             LVL.-9300
+
+ X
+                                                                S5                   S5                                                      S4                                                                    S4                                   S4                           S5                              S5
+                               S1                                                                                 S4                                                                                                                                                                                                                                  S1
+
+
+
+
+                                                                                            LVL.-9300                                                                                                   S8
+                                                                                                                                                                             175mm.
+                                                                                                                                                                             THK.SLAB
+ W
+                                                                                                                                             S9                                                                    S9                                   S9                           S5                              S5
+                               S1                                                    S5                           S9                                                                                                                                                                                                                                  S1
+                                                                S5
+                                                                                                                                                                             LVL.-8850
+                                                                                                                                                                  1                  1
+
+ V
+                                                                                                                                             S17                                                                                           S17                 S10
+                                                                                                                  S10                                                        S16
+ U
+                                                                S2                  S2
+                                                                                                                                     2                                        LVL.-8850                                                        2                                     S2                              S2                                   S1
+                               S1
+
+                                                                                                                                                                                                                                                                                                                                                                                               BEAM SCHEDULE
+
+                                                                                                                                     2       S17                             175mm.                                                            2         S17
+                                                                                                                                                                             THK.SLAB
+ T
+                               S1                               S5                   S5                                                                                                                                                                                               S5                             S5                                   S1
+ S
+                                                                                                                  S9                         S9                              S8                                         S9                                     S9
+                                                                                                                                                                  1                  1
+                                                                                           LVL.-9300                                                                         175mm.                                                                                                                                         LVL.-9300
+                                                                                                                                                                             THK.SLAB
+
+ R                                                                                                                                                                           LVL.-8850
+                                S1                                                   S5                           S4                         S4                                                                     S4                                                                                               S5                                   S1
+                                                                S5                                                                                                                                                                                      S4                           S5
+
+
+
+
+                                                                                          LVL.-9300
+
+ Q
+                                                                                                                  S4                                                                                               S4                                   S4                            S5                             S5                               S1
+                                    S1                        S5                     S5                                                      S4                                                                                                                                                                                                                                                SCHEDULE OF SLAB R/F
+
+
+                                                                                                           REFER SEPARATE DWG.
+
+
+
+ P
+                                    S1                          S2                   S2                                                                                                                                                                              S13         4196                    S13         4068                    S15
+                                                                                                                                                                                                                                                                                                                                                               4627
+                                                                                                                                                      REFER SEPARATE DWG.
+
+
+
+
+                                    S12                          S11                 S11                                                                                                                                                                             S14                                 S14                                 S15
+                                                                                                                                                                                                                                                                    DN
+
+
+
+
+ O
+                                    S12                                              S11
+ N                                                              S11
+                                                                                                                                                                                                  S4                                S4                               S14                                 S14                                 S15
+                                                                                                                                                                                          S18
+
+
+
+                                    S12                         S11                  S11
+
+
+ M
+                                                                                           LVL.-9300                                                                                                                                                                S14                                  S14                                 S23
+ L
+                                    S12                                              S11
+                                                                 S11
+                                                                                                                                                                                                                                                                                        LVL.-9300
+                                                                                                                                                                                                                                                                    UP
+
+
+                                    S1                           S2                  S2                                                                                                                                                                             S13                                  S13                                S23
+
+
+
+
+ K
+                                     S19                        S20                  S19                                      S19     S20                                                                         S20                              S19                         S20                             S20                           S22
+                                                                                                                                                                        S21
+                                                 3064                     3543                                                                                                                                                                                                                                                                     2692
+                                                                                                3199                   3160                                                              4165                                3470                            3182                            3374                      3377
+                                                                                                                                                   3470
+                                          5341
+
+
+
+
+                                                                                                                                              REFER SEPARATE DWG.
+
+ J
+                                     S23                        S4                  S4                       S4                       S4                                                                      S4                                 S4                              S4                            S4                           S23
+     600 MM TH. BASEMENT
+
+
+
+
+                                                                                                                                                                                                                                                                                                                                                                        600 MM TH. BASEMENT
+       DIAPHRAGM WALL
+
+
+
+
+                                                                                                                                                                                                                                                                                                                                                                          DIAPHRAGM WALL
+
+
+
+
+ I
+                                     S23                        S4                  S4                      S4                        S4                                                                      S4                                   S4                          S4                          S4                               S23
+
+
+
+
+                                                                                                                                                                                 LVL.-8850         S8
+                                                                                                                                                                                 175mm.
+ H                                                                                                                                                                               THK.SLAB
+                                                        S23     S4                  S4                                                S9                                                                      S9                                   S9                           S4                             S4                           S23
+                                                                                                             S9
+
+
+                                                                                                                                                              1                  1
+
+ G
+                                                                                                            S10                      S17                               S16                                                                    S17            S10
+ F                                                                                                                                                                                   175mm.
+                                     S23                        S4                  S4                                          2                                                                                                         2                                    S4                          S4                               S23
+                                                                                                                                                                                     THK.SLAB
+
+
+
+
+                                                                                         LVL.-9300                                                                                                                                                                                                              LVL.-9300
+                                                                                                                                2 S17                                                LVL.-8850                                            2 S17
+ E
+                                     S23                        S4                  S4                                                                                                                                                                                         S4                              S4                           S1
+ D
+                                                                                                            S9                        S9                                S8                                        S9                               S9
+
+                                                                                                                                                                                     LVL.-8850
+                                                                                                                                                          1                  1       175mm.
+                                                                                                                                                                                     THK.SLAB
+
+ C
+                                         S23                    S4                                          S4                        S4                                                                                                           S4                           S4                                                          S23
+                                                                                    S4                                                                                                                  S8 S4                                                                                                  S4
+
+
+
+
+ B
+                                         S23                    S4                  S4                      S4                        S4                                                                      S4                                   S4                           S4                             S4                           S23
+
+
+
+                                                                                                                                                                       REFER SEPARATE DWG.
+                                                                                                                                                                                                                                                                         300mm.THK.R.C.C. WALL START
+                                                                                          300mm.THK.R.C.C. WALL START                             B
+
+ A
+                                         S26                    S25                       S26               S25                              S26                                                                   S24                                       S24                 S24                           S24                          S26
+                                                                                                                                                                        S25
+                           A                                                                                                                                                                                                                                                                                                                 A
+                                                                                                                                                                                                                                                                                     100mm.THK.R.C.C. WALL START
+
+
+
+
+                                                                                                                                                  B                                                                                           TREATED
+                                                                       COLLECTION                             AERATION                                                                     CHLORINE                                                                                                      TREATED
+                                                                          TANK                                  TANK                                                                         TANK                                              TANK 1                                                     TANK 2
+                                                                                                                                             600 MM TH. BASEMENT
+                                                                                                                                               DIAPHRAGM WALL
+                                                                                                                                                                                                                                                                                                                                              R1
+
+
+
+
+STRUCTURAL LAY-OUT AT 3rd. BASEMENT ROOF SLAB LEVEL                                                                                                                                                                                                                                                                                                                                           R1
+                                                                                                                                                                                                                                                                                                                                                                                              NO.
+                                                                                                                                                                                                                                                                                                                                                                                                    18.09.23
+                                                                                                                                                                                                                                                                                                                                                                                                     DATE
+                                                                                                                                                                                                                                                                                                                                                                                                                           ADDED STP DETAILS
+                                                                                                                                                                                                                                                                                                                                                                                                                              REVISION
+                                                                                                                                                                                                                                                                                                                                                                                                                                                  D   B
+                                                                                                                                                                                                                                                                                                                                                                                                                                                  BY DR CH
+                                                                                                                                                                                                                                                                                                                                                                                                                                                           C
+
+
+
+
+                                                                                                                                         ³                                                                                                                                                                                                                                                    ARCHITECT
+
+
+
+
+                                                                                                                                                                                                                                                                                                                                                                                                JOB
+                                                                                                                                                                                                                                                                                                                                                                                                TITLE
+                                                                                                                                                                                                                                                                                                                                                                                                            RESI. APPT. FOR SANGHVI REALTY
+                                                                                                                                                                                                                                                                                                                                                                      TYPICAL SB DETAIL
+                                                                                                                                                                                                                                                                                                                                                                                              DRAWING          STRUCTURAL LAYOUT AT
+                                                                                                                                                                                                                                                                                                                                                                                               TITLE           3rd BASEMENT ROOF SLAB LVL.
+                                                                                                                                                                                                                                         -8850 SLAB LVL
+
+                                                                                                                                                                                                                                                                                                                                                                                               JOB NO            DATE        DRG. NO.             REVISION
+
+
+                                                                                                                                                                                            -9300 SLAB LVL.
+                                                                                                                                                                                                                                                                                                                -9300 SLAB LVL.
+                                                                                                                                                                                                                                                                                                                                                                                              3922              24-05-22     B3-S-101                 R1
+
+                                                                                                                                                                                                                                                                                                                                                                                                SCALE          SHEET SIZE    DRAWN       DESIGN   CHECKED
+                                                                                                                                                                                                                                                                                                                                                                                                                             RAVI
+                                                                                                                                                                                                                                                                                                                                                                                                1:125             A1         BABUBHAI    DENISH   CHIRAG
+
+                                                                                                                                                                                                                                                                                                                                                                                              STRUCTURAL CONSULTANT
+
+
+                                                                                                                                                                                                                                                                                                                                                                                                                        DUCON
+                                                                                                                                                                                                                                                                                                                                                                SECTION: 2-2
+                                                                                                                                                                                                              SECTION: 1-1
+

@@ -32,13 +32,95 @@ import {
   INPUT_DIR,
   OUTPUT_DIR,
   TILE_CONCURRENCY,
+  OPENAI_CROP_MODEL,
+  CROP_PAGE_MAX_DIM,
 } from "./config.js";
-import { pdfToPageTiles, getPageCount } from "./pdfProcessor.js";
-import type { PageTile } from "./pdfProcessor.js";
+import {
+  pdfToPageTiles,
+  pdfToPages,
+  encodePagePreview,
+  tilesFromRegion,
+  getPageCount,
+} from "./pdfProcessor.js";
+import type { PageTile, PixelRect } from "./pdfProcessor.js";
+import { cropPage } from "./cropper.js";
 import { extractElementsFromImage, emptyResult } from "./aiExtractor.js";
 import { mergeTileExtractions } from "./postProcess.js";
 import type { TileResult } from "./postProcess.js";
 import type { PageError, PageResult, Summary } from "./types.js";
+
+/** One page's tiles ready for extraction, from either pipeline. */
+interface PageWork {
+  page: number;
+  pageWidth: number;
+  pageHeight: number;
+  tiles: PageTile[];
+  /** Grid positions before blank-skipping (grid mode only). */
+  gridTiles?: number;
+}
+
+/**
+ * Produce per-page tiles using the selected pipeline.
+ *  - Agentic (Design B, when OPENAI_CROP_MODEL is set): a strong model crops
+ *    the regions worth reading, each region is tiled for legibility.
+ *    Falls back to whole-page tiling when the cropper returns nothing or fails.
+ *  - Grid (default): the original deterministic overlapping-tile pipeline.
+ */
+async function* producePageWork(
+  pdfPath: string,
+  pageSet: Set<number>,
+): AsyncGenerator<PageWork, void, void> {
+  if (OPENAI_CROP_MODEL) {
+    for await (const page of pdfToPages(pdfPath)) {
+      if (!pageSet.has(page.page)) continue; // don't spend cropper calls on skipped pages
+
+      let tiles: PageTile[] = [];
+      try {
+        const preview = await encodePagePreview(page, CROP_PAGE_MAX_DIM);
+        const regions = await cropPage(page.page, preview);
+        if (regions.length === 0) {
+          tiles = await tilesFromRegion(page, {
+            left: 0,
+            top: 0,
+            width: page.pageWidth,
+            height: page.pageHeight,
+          });
+        } else {
+          for (const r of regions) {
+            const rect: PixelRect = {
+              left: r.x1 * page.pageWidth,
+              top: r.y1 * page.pageHeight,
+              width: (r.x2 - r.x1) * page.pageWidth,
+              height: (r.y2 - r.y1) * page.pageHeight,
+            };
+            tiles.push(...(await tilesFromRegion(page, rect)));
+          }
+        }
+      } catch (exc) {
+        const msg = exc instanceof Error ? exc.message : String(exc);
+        console.log(`\n  [Page ${page.page}] cropper stage failed (${msg}); tiling whole page.`);
+        tiles = await tilesFromRegion(page, {
+          left: 0,
+          top: 0,
+          width: page.pageWidth,
+          height: page.pageHeight,
+        });
+      }
+
+      yield { page: page.page, pageWidth: page.pageWidth, pageHeight: page.pageHeight, tiles };
+    }
+  } else {
+    for await (const pageTiles of pdfToPageTiles(pdfPath)) {
+      yield {
+        page: pageTiles.page,
+        pageWidth: pageTiles.pageWidth,
+        pageHeight: pageTiles.pageHeight,
+        tiles: pageTiles.tiles,
+        gridTiles: pageTiles.gridTiles,
+      };
+    }
+  }
+}
 
 // ── Aggregation ───────────────────────────────────────────────────────────────
 
@@ -80,6 +162,9 @@ async function analyzePdf(
   console.log(bar);
   console.log(`  PDF    : ${pdfPath}`);
   console.log(`  Output : ${outputPath}`);
+  console.log(
+    `  Mode   : ${OPENAI_CROP_MODEL ? `agentic crop (${OPENAI_CROP_MODEL}) + extract` : "grid tiling"}`,
+  );
 
   const totalPages = await getPageCount(pdfPath);
   const pagesToProcess = pageFilter && pageFilter.length ? pageFilter : rangeInclusive(1, totalPages);
@@ -92,35 +177,36 @@ async function analyzePdf(
   const errors: PageError[] = [];
 
   let done = 0;
-  for await (const pageTiles of pdfToPageTiles(pdfPath)) {
-    const pageNum = pageTiles.page;
+  for await (const work of producePageWork(pdfPath, pagesToProcessSet)) {
+    const pageNum = work.page;
     if (!pagesToProcessSet.has(pageNum)) {
       continue;
     }
 
-    const skipped = pageTiles.gridTiles - pageTiles.tiles.length;
+    const skipped =
+      work.gridTiles !== undefined ? work.gridTiles - work.tiles.length : 0;
     process.stderr.write(
-      `\rPage ${pageNum}: ${pageTiles.tiles.length} tile(s) to analyse` +
+      `\rPage ${pageNum}: ${work.tiles.length} tile(s) to analyse` +
         (skipped ? ` (${skipped} blank skipped)` : "") +
         "\n",
     );
 
     try {
       const tileResults: TileResult[] = await mapWithConcurrency(
-        pageTiles.tiles,
+        work.tiles,
         TILE_CONCURRENCY,
         async (tile: PageTile, i: number) => {
           const extraction = await extractElementsFromImage(pageNum, tile.b64);
           process.stderr.write(
-            `\r  Page ${pageNum} tiles [${i + 1}/${pageTiles.tiles.length}]`,
+            `\r  Page ${pageNum} tiles [${i + 1}/${work.tiles.length}]`,
           );
           return { tile, extraction };
         },
       );
       const elements = mergeTileExtractions(
         tileResults,
-        pageTiles.pageWidth,
-        pageTiles.pageHeight,
+        work.pageWidth,
+        work.pageHeight,
       );
       perPageResults.push({ page: pageNum, elements });
     } catch (exc) {

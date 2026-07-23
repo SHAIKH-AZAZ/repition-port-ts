@@ -30,6 +30,33 @@ npm start -- --file drawing.pdf --output my_report.json
 Build to plain JS: `npm run build` → `dist/`, then `node dist/main.js`.
 Run logic self-check: `npm run check`.
 
+## Two-model agentic mode (Design B)
+
+By default every page is split into a fixed grid of overlapping tiles and each
+tile is sent to one vision model. Optionally you can run a **two-model** pipeline
+where a stronger model decides *what to read* and a cheaper model does the reading:
+
+1. **Cropper (strong model)** — sees a downscaled preview of the whole sheet and,
+   via tool calls (`crop_region` / `finish`), marks the layout/section regions
+   worth reading while ignoring schedules, title blocks and legends.
+2. **Extractor (cheap model)** — each cropped region is tiled at full resolution
+   (so small labels stay legible) and read for BEAM/SLAB/COLUMN/FOOTING labels.
+
+The crops feed the *same* deterministic post-processing (cross-tile dedupe,
+prefix re-bucketing, label normalisation), so output is identical in shape.
+
+Enable it by setting `OPENAI_CROP_MODEL` in `.env`:
+
+```bash
+OPENAI_CROP_MODEL=google/gemini-2.5-pro   # strong: region cropping
+OPENAI_EXTRACT_MODEL=gpt-4.1-mini         # cheap: label reading (defaults to OPENAI_VISION_MODEL)
+```
+
+Leave `OPENAI_CROP_MODEL` empty to keep the original grid-tiling pipeline.
+If the cropper returns no regions or errors on a page, that page falls back to
+whole-page tiling automatically. Relevant tunables live in `src/config.ts`
+(`CROP_PAGE_MAX_DIM`, `MAX_CROP_CALLS`, `CROP_PROMPT`).
+
 ## Layout ↔ Python source
 
 | TypeScript                | Python                |

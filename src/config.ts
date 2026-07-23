@@ -18,8 +18,14 @@ dotenv.config({ path: path.join(ROOT_DIR, ".env") });
 export const INPUT_DIR: string = path.join(ROOT_DIR, "input"); // PDF files placed here
 export const OUTPUT_DIR: string = path.join(ROOT_DIR, "output"); // JSON reports written here
 
-// ── OpenAI Settings ───────────────────────────────────────────────────────────
+// ── Model provider settings (OpenAI or any OpenAI-compatible API) ─────────────
+// To use OpenRouter: set in .env
+//   OPENAI_BASE_URL=https://openrouter.ai/api/v1
+//   OPENAI_API_KEY=sk-or-v1-...            (your OpenRouter key)
+//   OPENAI_VISION_MODEL=google/gemini-2.5-pro   (any vision model slug)
+// Leave OPENAI_BASE_URL empty to use OpenAI directly.
 export const OPENAI_API_KEY: string = process.env.OPENAI_API_KEY ?? "";
+export const OPENAI_BASE_URL: string = process.env.OPENAI_BASE_URL ?? "";
 // Read model from OPENAI_VISION_MODEL env var; fall back to gpt-4.1-mini
 export const OPENAI_MODEL: string = process.env.OPENAI_VISION_MODEL ?? "gpt-4.1-mini";
 

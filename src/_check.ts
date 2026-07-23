@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { parseResponse, emptyResult, emptyExtraction } from "./aiExtractor.js";
 import { mergeTileExtractions, resolveElement, normalizeLabel } from "./postProcess.js";
+import { normalizeRegion } from "./cropper.js";
 import { parsePageList } from "./main.js";
 
 // ── parseResponse: new positions format ───────────────────────────────────────
@@ -102,6 +103,33 @@ const merged3 = mergeTileExtractions(
   1024,
 );
 assert.deepEqual(merged3.BEAM.labels, [{ label: "B7", count: 3 }]);
+
+// ── normalizeRegion: cropper tool-arg coercion ────────────────────────────────
+// Plain fractional box passes through.
+assert.deepEqual(normalizeRegion({ x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.6, label: "p", kind: "plan" }), {
+  x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.6, label: "p", kind: "plan",
+});
+// 0–1000 scale is rescaled to fractions.
+{
+  const r = normalizeRegion({ x1: 100, y1: 200, x2: 500, y2: 600 });
+  assert.ok(r && Math.abs(r.x1 - 0.1) < 1e-9 && Math.abs(r.y2 - 0.6) < 1e-9);
+  assert.equal(r!.label, "region"); // default label
+}
+// Reversed corners are swapped.
+{
+  const r = normalizeRegion({ x1: 0.8, y1: 0.9, x2: 0.2, y2: 0.3 });
+  assert.ok(r && r.x1 === 0.2 && r.x2 === 0.8 && r.y1 === 0.3 && r.y2 === 0.9);
+}
+// Out-of-range coords clamp to [0,1].
+{
+  const r = normalizeRegion({ x1: -0.5, y1: 0.1, x2: 1.5, y2: 0.9 });
+  assert.ok(r && r.x1 === 0 && r.x2 === 1);
+}
+// Degenerate / tiny / invalid regions are rejected.
+assert.equal(normalizeRegion({ x1: 0.5, y1: 0.5, x2: 0.5, y2: 0.9 }), null);
+assert.equal(normalizeRegion({ x1: 0.1, y1: 0.1, x2: 0.105, y2: 0.9 }), null);
+assert.equal(normalizeRegion({ x1: "a", y1: 0, x2: 1, y2: 1 }), null);
+assert.equal(normalizeRegion(null), null);
 
 // ── misc ──────────────────────────────────────────────────────────────────────
 assert.deepEqual(parsePageList("1,3,5-8,10"), [1, 3, 5, 6, 7, 8, 10]);

@@ -9,7 +9,7 @@ import OpenAI from "openai";
 import {
   OPENAI_API_KEY,
   OPENAI_BASE_URL,
-  OPENAI_MODEL,
+  OPENAI_EXTRACT_MODEL,
   EXTRACTION_PROMPT,
   STRUCTURAL_ELEMENTS,
   MAX_COMPLETION_TOKENS,
@@ -22,27 +22,36 @@ import type {
 } from "./types.js";
 
 // ── Client ──────────────────────────────────────────────────────────────────
+/**
+ * Build an OpenAI-compatible client. Shared by the extractor and the cropper
+ * so each stage can point at a different model/provider if desired.
+ * `baseURL` empty means api.openai.com (or the OpenRouter URL, etc.).
+ */
+export function makeClient(apiKey: string, baseURL: string): OpenAI {
+  if (!apiKey) {
+    throw new Error(
+      "OPENAI_API_KEY is not set. " +
+        "Create a .env file with OPENAI_API_KEY=sk-... (or an OpenRouter " +
+        "sk-or-v1-... key together with OPENAI_BASE_URL).",
+    );
+  }
+  return new OpenAI({
+    apiKey,
+    // Any OpenAI-compatible endpoint, e.g. OpenRouter:
+    // https://openrouter.ai/api/v1 — empty string means api.openai.com.
+    ...(baseURL ? { baseURL } : {}),
+    // Optional OpenRouter attribution headers (harmless for OpenAI).
+    defaultHeaders: {
+      "X-Title": "RCC Drawing Element Analyzer",
+    },
+  });
+}
+
 let _client: OpenAI | null = null;
 
 export function getClient(): OpenAI {
   if (_client === null) {
-    if (!OPENAI_API_KEY) {
-      throw new Error(
-        "OPENAI_API_KEY is not set. " +
-          "Create a .env file with OPENAI_API_KEY=sk-... (or an OpenRouter " +
-          "sk-or-v1-... key together with OPENAI_BASE_URL).",
-      );
-    }
-    _client = new OpenAI({
-      apiKey: OPENAI_API_KEY,
-      // Any OpenAI-compatible endpoint, e.g. OpenRouter:
-      // https://openrouter.ai/api/v1 — empty string means api.openai.com.
-      ...(OPENAI_BASE_URL ? { baseURL: OPENAI_BASE_URL } : {}),
-      // Optional OpenRouter attribution headers (harmless for OpenAI).
-      defaultHeaders: {
-        "X-Title": "RCC Drawing Element Analyzer",
-      },
-    });
+    _client = makeClient(OPENAI_API_KEY, OPENAI_BASE_URL);
   }
   return _client;
 }
@@ -152,6 +161,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export async function extractElementsFromImage(
   pageNumber: number,
   base64Png: string,
+  model: string = OPENAI_EXTRACT_MODEL,
   maxRetries = 3,
   retryDelaySec = 5.0,
 ): Promise<TileExtraction> {
@@ -172,7 +182,7 @@ export async function extractElementsFromImage(
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await client.chat.completions.create({
-        model: OPENAI_MODEL,
+        model,
         messages,
         max_tokens: MAX_COMPLETION_TOKENS,
         temperature: 0, // deterministic output

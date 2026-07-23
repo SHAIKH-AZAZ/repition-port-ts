@@ -12,7 +12,9 @@ const __filename = fileURLToPath(import.meta.url);
 export const ROOT_DIR: string = path.resolve(path.dirname(__filename), "..");
 
 // Load .env file from project root if present
-dotenv.config({ path: path.join(ROOT_DIR, ".env") });
+// override:true so values in .env win over any stale variables already
+// exported in the shell (e.g. a leftover OPENAI_API_KEY from another project).
+dotenv.config({ path: path.join(ROOT_DIR, ".env"), override: true });
 
 // ── Directory layout ──────────────────────────────────────────────────────────
 export const INPUT_DIR: string = path.join(ROOT_DIR, "input"); // PDF files placed here
@@ -28,6 +30,29 @@ export const OPENAI_API_KEY: string = process.env.OPENAI_API_KEY ?? "";
 export const OPENAI_BASE_URL: string = process.env.OPENAI_BASE_URL ?? "";
 // Read model from OPENAI_VISION_MODEL env var; fall back to gpt-4.1-mini
 export const OPENAI_MODEL: string = process.env.OPENAI_VISION_MODEL ?? "gpt-4.1-mini";
+
+// ── Two-model (agentic) pipeline ──────────────────────────────────────────────
+// Design B: a STRONGER "cropper" model visually locates the regions worth
+// reading and crops them via tool calls; a CHEAPER "extractor" model reads the
+// element labels out of each crop.
+//
+// Set OPENAI_CROP_MODEL to a capable vision model to ENABLE agentic cropping.
+// Leave it empty to keep the original deterministic grid-tiling pipeline.
+export const OPENAI_CROP_MODEL: string = process.env.OPENAI_CROP_MODEL ?? "";
+// The extractor (cheap) model — falls back to the shared OPENAI_VISION_MODEL.
+export const OPENAI_EXTRACT_MODEL: string =
+  process.env.OPENAI_EXTRACT_MODEL ?? OPENAI_MODEL;
+// Optional per-stage provider overrides for the cropper (default to the shared
+// client so a single key/endpoint keeps working out of the box).
+export const OPENAI_CROP_BASE_URL: string =
+  process.env.OPENAI_CROP_BASE_URL ?? OPENAI_BASE_URL;
+export const OPENAI_CROP_API_KEY: string =
+  process.env.OPENAI_CROP_API_KEY ?? OPENAI_API_KEY;
+// The cropper sees a DOWNSCALED full page (region-finding is a coarse judgement
+// that does not need 400-DPI detail). Long side of that preview, in pixels.
+export const CROP_PAGE_MAX_DIM = 1600;
+// Safety cap on the cropper's agent loop (tool-call turns) per page.
+export const MAX_CROP_CALLS = 30;
 
 // ── Structural Elements to Detect ─────────────────────────────────────────────
 export const STRUCTURAL_ELEMENTS = ["BEAM", "SLAB", "COLUMN", "FOOTING"] as const;
@@ -70,6 +95,51 @@ export const DROP_DIMENSION_MERGES = true;
 
 // ── Output ────────────────────────────────────────────────────────────────────
 export const DEFAULT_OUTPUT_SUFFIX = "_elements.json";
+
+// ── Debug artifacts (per-crop images + JSON) ──────────────────────────────────
+// When enabled, every crop tile image and its RAW extraction JSON are written
+// to  output/<pdf>_crops/page_<n>/...  together with the cropper's chosen
+// regions and the merged page result. Lets you inspect exactly what each crop
+// looked like and what was read from it. Set SAVE_ARTIFACTS=0 to turn off.
+export const SAVE_ARTIFACTS = (process.env.SAVE_ARTIFACTS ?? "1") !== "0";
+// Folder suffix (next to the summary JSON) that holds the crop artifacts.
+export const ARTIFACTS_SUFFIX = "_crops";
+
+// ── Cropper Prompt (agentic, strong model) ────────────────────────────────────
+// Sent with a DOWNSCALED full-page image to the cropper model. The model must
+// call the crop_region tool for every region worth reading, then finish.
+export const CROP_PROMPT = `You are an expert RCC/civil structural drawing interpreter.
+You are looking at ONE full sheet from a structural drawing set (it may be A0/A1
+size, so small labels are hard to read at this zoom — that is expected).
+
+Your ONLY job is to LOCATE the regions of this sheet that should be read closely
+for structural element labels (BEAM / SLAB / COLUMN / FOOTING), and crop each
+one by calling the "crop_region" tool. You do NOT read or list the labels
+yourself — a second pass will do that on your crops.
+
+CROP these regions (call crop_region once per region):
+  - The main LAYOUT / PLAN drawing area(s) (floor plan, framing plan, column
+    layout, foundation layout).
+  - CROSS-SECTION / SECTIONAL / detail views that carry element labels.
+  - If the drawing area is large, split it into several ADJACENT, slightly
+    OVERLAPPING regions so that no label sits exactly on a crop border. Aim for
+    regions that are a readable fraction of the sheet (roughly 1/4 to 1/9 of the
+    sheet each for dense plans), not one giant crop.
+
+DO NOT crop (ignore these entirely):
+  - Schedules / reinforcement tables (Beam/Column/Footing/Slab schedules,
+    bar-bending schedules) — any gridded table of element details.
+  - Title blocks, revision clouds, notes boxes, legends, key plans.
+  - Empty margins.
+
+COORDINATES: give x1,y1,x2,y2 as fractions of the whole sheet in [0,1], where
+(0,0) is the TOP-LEFT and (1,1) is the BOTTOM-RIGHT. x1<x2 and y1<y2.
+Give each region a short "label" (e.g. "plan-top-left", "section-A", "column-layout")
+and a "kind" of "plan", "section", or "other".
+
+When you have cropped every relevant region, call "finish".
+If the sheet contains ONLY schedules/title blocks and no layout drawing, call
+"finish" immediately without cropping anything.`;
 
 // ── Prompt Template ───────────────────────────────────────────────────────────
 // Sent with each page image to the OpenAI vision model.

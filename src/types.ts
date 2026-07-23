@@ -41,6 +41,7 @@ export interface PageResult {
 }
 
 /** element -> label string -> total occurrences across all pages. */
+// okay
 export type Summary = Record<StructuralElement, Record<string, number>>;
 
 export interface PageError {

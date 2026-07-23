@@ -3,36 +3,68 @@ import type { AnalysisEvent, StructuralElement, TileExtraction } from "../types"
 
 const ELEMENTS: StructuralElement[] = ["BEAM", "SLAB", "COLUMN", "FOOTING"];
 
-/** One crop image with the JSON that was read from it (the "cropped → logged" pair). */
+/**
+ * Compact card: small thumbnail + label chips for what was read from the crop.
+ * Click the thumbnail to open the full-size image in a lightbox.
+ */
 export function CropLogItem({
   crop,
   extraction,
+  onZoom,
 }: {
   crop: Extract<AnalysisEvent, { type: "crop" }>;
   extraction?: TileExtraction;
+  onZoom: (url: string, title: string) => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const [showJson, setShowJson] = useState(false);
+  const chips = extraction ? toChips(extraction) : null;
+  const title = `page ${crop.page} · ${crop.name}`;
+
   return (
     <div className="crop-item">
-      <div className="crop-head">
-        <span>🖼 Page {crop.page} · {crop.name}</span>
-        <button onClick={() => setOpen((o) => !o)}>{open ? "hide json" : "show json"}</button>
+      <button className="thumb" onClick={() => onZoom(crop.url, title)} title="Click to enlarge">
+        <img src={crop.url} alt={crop.name} loading="lazy" />
+      </button>
+      <div className="crop-body">
+        <div className="crop-title">
+          <span className="mono">{crop.name}</span>
+          <span className="pill">p{crop.page}</span>
+        </div>
+        <div className="crop-chips">
+          {chips === null && <span className="pill wait">extracting…</span>}
+          {chips !== null && chips.length === 0 && <span className="pill empty">no labels</span>}
+          {chips?.map((c, i) => (
+            <span key={i} className={`pill el-${c.el.toLowerCase()}`}>
+              {c.label} x{c.count}
+            </span>
+          ))}
+        </div>
+        {extraction && (
+          <button className="linkish" onClick={() => setShowJson((s) => !s)}>
+            {showJson ? "hide raw json" : "raw json"}
+          </button>
+        )}
+        {showJson && extraction && (
+          <pre className="json">{JSON.stringify(compact(extraction), null, 2)}</pre>
+        )}
       </div>
-      <img src={crop.url} alt={crop.name} loading="lazy" />
-      {open && (
-        <pre className="json">{extraction ? summarize(extraction) : "…extracting"}</pre>
-      )}
     </div>
   );
 }
 
-function summarize(ex: TileExtraction): string {
-  const parts: string[] = [];
+function toChips(ex: TileExtraction): { el: StructuralElement; label: string; count: number }[] {
+  const out: { el: StructuralElement; label: string; count: number }[] = [];
   for (const el of ELEMENTS) {
-    const items = ex[el];
-    if (items && items.length) {
-      parts.push(`${el}: ` + items.map((i) => `${i.label}×${i.count}`).join(", "));
-    }
+    for (const item of ex[el] ?? []) out.push({ el, label: item.label, count: item.count });
   }
-  return parts.length ? parts.join("\n") : "(nothing found)";
+  return out;
+}
+
+/** Raw JSON without positions noise (kept in artifacts on disk). */
+function compact(ex: TileExtraction) {
+  const out: Record<string, { label: string; count: number }[]> = {};
+  for (const el of ELEMENTS) {
+    if (ex[el]?.length) out[el] = ex[el].map(({ label, count }) => ({ label, count }));
+  }
+  return out;
 }

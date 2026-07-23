@@ -1,29 +1,22 @@
 #!/usr/bin/env node
 /**
  * main.ts
- * RCC Drawing Element Analyzer — Entry Point (TypeScript port)
- * ──────────────────────────────────────────────────────────
- * Scans the `input/` folder for PDF drawing files, analyses each one for
- * BEAM, SLAB, COLUMN, and FOOTING repetitions using GPT-4.1-mini vision,
- * and writes per-file JSON reports to the `output/` folder.
+ * RCC Drawing Element Analyzer — CLI entry point.
+ *
+ * Thin consumer of the event-emitting core in analysis.ts: it builds run
+ * options and an emitter that prints progress, preserving the original console
+ * output. The same core powers the web backend (which emits over Socket.io).
  *
  * Usage:
- *     # Analyse ALL PDFs in input/
- *     npm start
- *
- *     # Analyse a specific PDF inside input/
- *     npm start -- --file drawing.pdf
- *
- *     # Analyse only specific pages
+ *     npm start                                  # all PDFs in input/
+ *     npm start -- --file drawing.pdf            # one PDF
  *     npm start -- --file drawing.pdf --pages 1,3,5-8
- *
- *     # Custom output file name (written to output/)
  *     npm start -- --file drawing.pdf --output my_report.json
  */
 
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
-import { mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -31,264 +24,66 @@ import {
   DEFAULT_OUTPUT_SUFFIX,
   INPUT_DIR,
   OUTPUT_DIR,
-  TILE_CONCURRENCY,
   OPENAI_CROP_MODEL,
-  CROP_PAGE_MAX_DIM,
   SAVE_ARTIFACTS,
   ARTIFACTS_SUFFIX,
 } from "./config.js";
-import {
-  pdfToPageTiles,
-  pdfToPages,
-  encodePagePreview,
-  tilesFromRegion,
-  getPageCount,
-} from "./pdfProcessor.js";
-import type { PageTile, PixelRect } from "./pdfProcessor.js";
-import { cropPage } from "./cropper.js";
-import type { CropRegion } from "./cropper.js";
-import { extractElementsFromImage, emptyResult } from "./aiExtractor.js";
-import { mergeTileExtractions } from "./postProcess.js";
-import type { TileResult } from "./postProcess.js";
-import {
-  ensurePageDir,
-  saveRegions,
-  saveTileArtifacts,
-  savePageResult,
-} from "./artifacts.js";
-import type { PageError, PageResult, Summary } from "./types.js";
+import { runAnalysis } from "./analysis.js";
+import type { Emit } from "./analysis.js";
+import type { AnalysisEvent, Summary } from "./events.js";
 
-/** Turn a region label into a filesystem-safe folder name. */
-function safeName(label: string): string {
-  return label.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "region";
-}
+const BAR = "=".repeat(60);
 
-/** One page's tiles ready for extraction, from either pipeline. */
-interface PageWork {
-  page: number;
-  pageWidth: number;
-  pageHeight: number;
-  tiles: PageTile[];
-  /** Grid positions before blank-skipping (grid mode only). */
-  gridTiles?: number;
-  /** Cropper regions (agentic mode only) — saved for debugging. */
-  regions?: CropRegion[];
-}
-
-/**
- * Produce per-page tiles using the selected pipeline.
- *  - Agentic (Design B, when OPENAI_CROP_MODEL is set): a strong model crops
- *    the regions worth reading, each region is tiled for legibility.
- *    Falls back to whole-page tiling when the cropper returns nothing or fails.
- *  - Grid (default): the original deterministic overlapping-tile pipeline.
- */
-async function* producePageWork(
-  pdfPath: string,
-  pageSet: Set<number>,
-): AsyncGenerator<PageWork, void, void> {
-  if (OPENAI_CROP_MODEL) {
-    for await (const page of pdfToPages(pdfPath)) {
-      if (!pageSet.has(page.page)) continue; // don't spend cropper calls on skipped pages
-
-      const wholePage: PixelRect = {
-        left: 0,
-        top: 0,
-        width: page.pageWidth,
-        height: page.pageHeight,
-      };
-      const tiles: PageTile[] = [];
-      let regions: CropRegion[] = [];
-
-      try {
-        const preview = await encodePagePreview(page, CROP_PAGE_MAX_DIM);
-        regions = await cropPage(page.page, preview);
-        if (regions.length === 0) {
-          // Nothing cropped — read the whole page as a fallback.
-          const ft = await tilesFromRegion(page, wholePage);
-          ft.forEach((t, i) => (t.artifactName = `fullpage/tile_${i}`));
-          tiles.push(...ft);
-        } else {
-          for (let ri = 0; ri < regions.length; ri++) {
-            const r = regions[ri];
-            const rect: PixelRect = {
-              left: r.x1 * page.pageWidth,
-              top: r.y1 * page.pageHeight,
-              width: (r.x2 - r.x1) * page.pageWidth,
-              height: (r.y2 - r.y1) * page.pageHeight,
-            };
-            const rt = await tilesFromRegion(page, rect);
-            const folder = `r${ri}_${safeName(r.label)}`;
-            rt.forEach((t, ti) => (t.artifactName = `${folder}/tile_${ti}`));
-            tiles.push(...rt);
-          }
+/** Build an emitter that reproduces the original CLI console output. */
+function makeConsoleEmitter(pdfPath: string, outputPath: string): Emit {
+  return (e: AnalysisEvent) => {
+    switch (e.type) {
+      case "job":
+        console.log(`\n${BAR}`);
+        console.log("  RCC Drawing Element Analyzer");
+        console.log(BAR);
+        console.log(`  PDF    : ${pdfPath}`);
+        console.log(`  Output : ${outputPath}`);
+        console.log(
+          `  Mode   : ${OPENAI_CROP_MODEL ? `agentic crop (${OPENAI_CROP_MODEL}) + extract` : "grid tiling"}`,
+        );
+        console.log(`  Pages  : ${e.totalPages} total | processing ${e.pages.length} page(s)`);
+        console.log(`${BAR}\n`);
+        break;
+      case "status":
+        console.log(`  ${e.message}`);
+        break;
+      case "page-start":
+        process.stderr.write(
+          `Page ${e.page}: ${e.tiles} tile(s) to analyse` +
+            (e.blankSkipped ? ` (${e.blankSkipped} blank skipped)` : "") +
+            "\n",
+        );
+        break;
+      case "page-result":
+        process.stderr.write(`Analysed page ${e.page}\n`);
+        break;
+      case "page-error":
+        console.log(`\n  ERROR on page ${e.page}: ${e.message}`);
+        break;
+      case "summary":
+        printSummary(e.summary);
+        break;
+      case "done":
+        if (e.errors) {
+          console.log(`\n  !  ${e.errors} page(s) had errors (not included in JSON output).`);
         }
-      } catch (exc) {
-        const msg = exc instanceof Error ? exc.message : String(exc);
-        console.log(`\n  [Page ${page.page}] cropper stage failed (${msg}); tiling whole page.`);
-        regions = [];
-        const ft = await tilesFromRegion(page, wholePage);
-        ft.forEach((t, i) => (t.artifactName = `fullpage/tile_${i}`));
-        tiles.push(...ft);
-      }
-
-      yield {
-        page: page.page,
-        pageWidth: page.pageWidth,
-        pageHeight: page.pageHeight,
-        tiles,
-        regions,
-      };
+        console.log(`\n  JSON report saved -> ${e.resultUrl}\n`);
+        break;
+      // crop / extraction / regions are for the UI; the CLI stays quiet on those.
     }
-  } else {
-    for await (const pageTiles of pdfToPageTiles(pdfPath)) {
-      pageTiles.tiles.forEach((t) => (t.artifactName = `tile_${t.index}`));
-      yield {
-        page: pageTiles.page,
-        pageWidth: pageTiles.pageWidth,
-        pageHeight: pageTiles.pageHeight,
-        tiles: pageTiles.tiles,
-        gridTiles: pageTiles.gridTiles,
-      };
-    }
-  }
+  };
 }
 
-// ── Aggregation ───────────────────────────────────────────────────────────────
-
-/**
- * Compute document-level label repetition counts from per-page results.
- * Each element maps label -> total occurrences summed across all pages,
- * e.g. { "BEAM": { "B1": 5, "B2": 2 }, ... }
- */
-function aggregateResults(perPage: PageResult[]): Summary {
-  const summary = {} as Summary;
-  for (const element of STRUCTURAL_ELEMENTS) {
-    const labelCounts: Record<string, number> = {};
-    for (const pageData of perPage) {
-      const entry = pageData.elements[element] ?? { total_distinct: 0, labels: [] };
-      for (const { label, count } of entry.labels) {
-        labelCounts[label] = (labelCounts[label] ?? 0) + count;
-      }
-    }
-    // Sort alphabetically so output is stable
-    const sorted: Record<string, number> = {};
-    for (const key of Object.keys(labelCounts).sort()) {
-      sorted[key] = labelCounts[key];
-    }
-    summary[element] = sorted;
-  }
-  return summary;
-}
-
-// ── Core analysis pipeline ────────────────────────────────────────────────────
-
-async function analyzePdf(
-  pdfPath: string,
-  outputPath: string,
-  pageFilter: number[] | null = null,
-): Promise<Summary> {
-  const bar = "=".repeat(60);
-  console.log(`\n${bar}`);
-  console.log("  RCC Drawing Element Analyzer");
-  console.log(bar);
-  console.log(`  PDF    : ${pdfPath}`);
-  console.log(`  Output : ${outputPath}`);
-  console.log(
-    `  Mode   : ${OPENAI_CROP_MODEL ? `agentic crop (${OPENAI_CROP_MODEL}) + extract` : "grid tiling"}`,
-  );
-
-  const totalPages = await getPageCount(pdfPath);
-  const pagesToProcess = pageFilter && pageFilter.length ? pageFilter : rangeInclusive(1, totalPages);
-  const pagesToProcessSet = new Set(pagesToProcess);
-
-  console.log(`  Pages  : ${totalPages} total | processing ${pagesToProcess.length} page(s)`);
-  console.log(`${bar}\n`);
-
-  const perPageResults: PageResult[] = [];
-  const errors: PageError[] = [];
-
-  // Per-crop debug artifacts (images + JSON) land next to the summary JSON.
-  const stem = path.basename(pdfPath, path.extname(pdfPath));
-  const artifactsBase = SAVE_ARTIFACTS
-    ? path.join(OUTPUT_DIR, stem + ARTIFACTS_SUFFIX)
-    : null;
-  if (artifactsBase) {
-    console.log(`  Crops  : saving per-crop images + JSON -> ${artifactsBase}`);
-  }
-
-  let done = 0;
-  for await (const work of producePageWork(pdfPath, pagesToProcessSet)) {
-    const pageNum = work.page;
-    if (!pagesToProcessSet.has(pageNum)) {
-      continue;
-    }
-
-    const skipped =
-      work.gridTiles !== undefined ? work.gridTiles - work.tiles.length : 0;
-    process.stderr.write(
-      `\rPage ${pageNum}: ${work.tiles.length} tile(s) to analyse` +
-        (skipped ? ` (${skipped} blank skipped)` : "") +
-        "\n",
-    );
-
-    // Prepare this page's artifact folder and dump the cropper regions.
-    const pageArt = artifactsBase ? ensurePageDir(artifactsBase, pageNum) : null;
-    if (pageArt && work.regions) {
-      saveRegions(pageArt, work.regions);
-    }
-
-    try {
-      const tileResults: TileResult[] = await mapWithConcurrency(
-        work.tiles,
-        TILE_CONCURRENCY,
-        async (tile: PageTile, i: number) => {
-          const extraction = await extractElementsFromImage(pageNum, tile.b64);
-          // Save the crop image next to the raw JSON it produced.
-          if (pageArt && tile.artifactName) {
-            saveTileArtifacts(pageArt, tile.artifactName, tile.b64, extraction);
-          }
-          process.stderr.write(
-            `\r  Page ${pageNum} tiles [${i + 1}/${work.tiles.length}]`,
-          );
-          return { tile, extraction };
-        },
-      );
-      const elements = mergeTileExtractions(
-        tileResults,
-        work.pageWidth,
-        work.pageHeight,
-      );
-      if (pageArt) {
-        savePageResult(pageArt, elements);
-      }
-      perPageResults.push({ page: pageNum, elements });
-    } catch (exc) {
-      const errMsg = exc instanceof Error ? exc.message : String(exc);
-      console.log(`\n  ERROR on page ${pageNum}: ${errMsg}`);
-      errors.push({ page: pageNum, error: errMsg });
-      // Still record the page with zeros so it appears in output
-      perPageResults.push({ page: pageNum, elements: emptyResult(), error: errMsg });
-    } finally {
-      done += 1;
-      process.stderr.write(`\rAnalysed page ${pageNum} [${done}/${pagesToProcess.length}]\n`);
-    }
-  }
-  process.stderr.write("\n");
-
-  // Sort per-page results by page number
-  perPageResults.sort((a, b) => a.page - b.page);
-
-  // Aggregate across pages — final report is just { ELEMENT: { label: count } }
-  const summary = aggregateResults(perPageResults);
-
-  // Write JSON to output/
-  mkdirSync(path.dirname(outputPath), { recursive: true });
-  writeFileSync(outputPath, JSON.stringify(summary, null, 2), "utf-8");
-
-  // ── Console summary ─────────────────────────────────────────────────────────
-  console.log(`\n${bar}`);
+function printSummary(summary: Summary): void {
+  console.log(`\n${BAR}`);
   console.log("  RESULTS SUMMARY");
-  console.log(bar);
+  console.log(BAR);
   for (const element of STRUCTURAL_ELEMENTS) {
     const entries = Object.entries(summary[element]);
     const totalInstances = entries.reduce((acc, [, count]) => acc + count, 0);
@@ -300,39 +95,29 @@ async function analyzePdf(
       `  ${element.padEnd(10)}  distinct=${String(distinct).padStart(3)}  total_instances=${String(totalInstances).padStart(4)}   ${labelsStr}`,
     );
   }
-  if (errors.length) {
-    console.log(`\n  !  ${errors.length} page(s) had errors (not included in JSON output).`);
+}
+
+/** Analyse one PDF via the core, printing progress to the console. */
+async function analyzePdf(
+  pdfPath: string,
+  outputPath: string,
+  pageFilter: number[] | null = null,
+): Promise<Summary> {
+  const stem = path.basename(pdfPath, path.extname(pdfPath));
+  const artifactsDir = SAVE_ARTIFACTS
+    ? path.join(OUTPUT_DIR, stem + ARTIFACTS_SUFFIX)
+    : null;
+  if (artifactsDir) {
+    console.log(`  Crops  : per-crop images + JSON -> ${artifactsDir}`);
   }
-  console.log(`\n  JSON report saved -> ${outputPath}\n`);
-
-  return summary;
+  return runAnalysis(
+    pdfPath,
+    { pageFilter, outputPath, artifactsDir },
+    makeConsoleEmitter(pdfPath, outputPath),
+  );
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Map over items with at most `limit` promises in flight; preserves order. */
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i], i);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
-function rangeInclusive(start: number, end: number): number[] {
-  const out: number[] = [];
-  for (let i = start; i <= end; i++) out.push(i);
-  return out;
-}
+// ── CLI helpers ────────────────────────────────────────────────────────────────
 
 /** Parse '1,3,5-8,10' style page specification into a sorted list of ints. */
 export function parsePageList(raw: string): number[] {
@@ -369,7 +154,7 @@ function discoverPdfs(): string[] {
     .map((f) => path.join(INPUT_DIR, f));
 }
 
-// ── CLI ───────────────────────────────────────────────────────────────────────
+// ── CLI ─────────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
@@ -381,10 +166,8 @@ async function main(): Promise<void> {
     allowPositionals: false,
   });
 
-  // Ensure output directory exists
   mkdirSync(OUTPUT_DIR, { recursive: true });
 
-  // Resolve page filter
   let pageFilter: number[] | null = null;
   if (values.pages) {
     try {
@@ -408,7 +191,6 @@ async function main(): Promise<void> {
 
     await analyzePdf(pdfPath, outputPath, pageFilter);
   } else {
-    // Batch mode — process every PDF in input/
     const pdfs = discoverPdfs();
     if (!pdfs.length) {
       console.log(`No PDF files found in ${INPUT_DIR}. Drop your drawings there and re-run.`);
@@ -430,9 +212,7 @@ async function main(): Promise<void> {
   }
 }
 
-// Only run when executed directly (mirrors Python's `if __name__ == "__main__"`).
-// Compare real filesystem paths — string-comparing URLs breaks when the path
-// contains spaces (encoded as %20 in import.meta.url).
+// Only run when executed directly.
 const isDirectRun =
   process.argv[1] &&
   path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);

@@ -66,7 +66,7 @@ export function ResultsTable({ summary }: { summary: Summary | null }) {
     saveBlob(lines.join("\n"), "text/csv", "elements.csv");
   }
 
-  const arrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "");
+  const arrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : " ↕");
 
   return (
     <div className="results">
@@ -92,8 +92,15 @@ export function ResultsTable({ summary }: { summary: Summary | null }) {
             <button className="group-head" onClick={() => setOpen((o) => ({ ...o, [el]: !o[el] }))}>
               <span className={`dot el-${el.toLowerCase()}`} />
               <span className="group-name">{el}</span>
-              <span className="muted">
-                {all.length ? `${all.length} distinct · ${total} total` : "none"}
+              <span className="group-count">
+                {all.length > 0 ? (
+                  <>
+                    <span className="count-badge">{all.length}</span>
+                    <span className="muted">{total} total</span>
+                  </>
+                ) : (
+                  <span className="muted">none</span>
+                )}
               </span>
               <span className="chev">{shown ? "▾" : "▸"}</span>
             </button>
@@ -103,26 +110,32 @@ export function ResultsTable({ summary }: { summary: Summary | null }) {
                 <table>
                   <thead>
                     <tr>
-                      <th onClick={() => toggleSort("label")} className="sortable">Label{arrow("label")}</th>
-                      <th onClick={() => toggleSort("count")} className="sortable num">Count{arrow("count")}</th>
+                      <th className="col-num">#</th>
+                      <th onClick={() => toggleSort("label")} className="sortable col-label">
+                        Label<span className="sort-icon">{arrow("label")}</span>
+                      </th>
+                      <th onClick={() => toggleSort("count")} className="sortable col-count">
+                        Count<span className="sort-icon">{arrow("count")}</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map(([label, count]) => (
+                    {rows.map(([label, count], idx) => (
                       <tr key={label}>
-                        <td className="mono">{highlight(label, query)}</td>
-                        <td className="num">{count}</td>
+                        <td className="col-num">{idx + 1}</td>
+                        <td className="mono col-label">{highlight(label, query)}</td>
+                        <td className="col-count">{count}</td>
                       </tr>
                     ))}
                     {rows.length === 0 && (
-                      <tr><td colSpan={2} className="muted">no match for “{query}”</td></tr>
+                      <tr><td colSpan={3} className="muted empty-row">no match for "{query}"</td></tr>
                     )}
                   </tbody>
                   {rows.length > 1 && (
                     <tfoot>
                       <tr>
-                        <td>Σ {rows.length} label(s)</td>
-                        <td className="num">{rows.reduce((a, [, c]) => a + c, 0)}</td>
+                        <td colSpan={2}>Σ {rows.length} label(s)</td>
+                        <td className="col-count">{rows.reduce((a, [, c]) => a + c, 0)}</td>
                       </tr>
                     </tfoot>
                   )}

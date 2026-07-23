@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { jobsService, uploadPdf, startJob, cancelJob } from "./api/feathers";
-import type { AnalysisEvent, ProgressEnvelope, Summary } from "./types";
+import type { AnalysisEvent, ProgressEnvelope, StructuralElement, Summary, TileExtraction } from "./types";
 import { Uploader } from "./components/Uploader";
 import { PdfPreview } from "./components/PdfPreview";
 import { LogConsole } from "./components/LogConsole";
@@ -14,7 +14,7 @@ export default function App() {
   const [events, setEvents] = useState<AnalysisEvent[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
-  const [zoom, setZoom] = useState<{ url: string; title: string } | null>(null);
+  const [zoom, setZoom] = useState<number | null>(null);
   const jobIdRef = useRef<string | null>(null);
 
   // Subscribe once to the jobs 'progress' stream; filter to the active job.
@@ -30,12 +30,30 @@ export default function App() {
     return () => jobsService.removeListener?.("progress", handler);
   }, []);
 
-  // Close the lightbox with Escape.
+  const allCrops = useMemo(
+    () => events.filter((e): e is Extract<AnalysisEvent, { type: "crop" }> => e.type === "crop"),
+    [events],
+  );
+
+  const extractionByKey = useMemo(() => {
+    const map = new Map<string, TileExtraction>();
+    for (const e of events) {
+      if (e.type === "extraction") map.set(`${e.page}/${e.name}`, e.extraction);
+    }
+    return map;
+  }, [events]);
+
+  // Close lightbox with Escape; navigate with ArrowLeft / ArrowRight.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setZoom(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (zoom === null) return;
+      if (e.key === "Escape") { setZoom(null); return; }
+      if (e.key === "ArrowLeft") { setZoom((i) => i !== null && i > 0 ? i - 1 : i); }
+      if (e.key === "ArrowRight") { setZoom((i) => i !== null && i < allCrops.length - 1 ? i + 1 : i); }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [zoom, allCrops.length]);
 
   const progress = useMemo(() => {
     let pages: number[] = [];
@@ -86,12 +104,18 @@ export default function App() {
     cancelled: "cancelled",
   };
 
+  const ELEMENTS: StructuralElement[] = ["BEAM", "SLAB", "COLUMN", "FOOTING"];
+
   return (
     <div className="app">
       <header>
-        <h1>RCC Drawing Element Analyzer</h1>
+        <div className="header-text">
+          <h1>RCC Drawing Element Analyzer</h1>
+          <p className="muted small">Extract structural element counts from engineering drawings</p>
+        </div>
         {jobId && (
           <span className={`status status-${phase}`}>
+            <span className="status-dot" />
             {phaseLabel[phase]}
             <code>{jobId.slice(0, 8)}</code>
           </span>
@@ -133,7 +157,7 @@ export default function App() {
       <section className="bottom">
         <div className="col">
           <h2>Live log</h2>
-          <LogConsole events={events} onZoom={(url, title) => setZoom({ url, title })} />
+          <LogConsole events={events} allCrops={allCrops} onZoom={(idx) => setZoom(idx)} />
         </div>
         <div className="col">
           <h2>Results</h2>
@@ -141,17 +165,75 @@ export default function App() {
         </div>
       </section>
 
-      {zoom && (
-        <div className="lightbox" onClick={() => setZoom(null)}>
-          <div className="lightbox-inner" onClick={(e) => e.stopPropagation()}>
-            <div className="lightbox-bar">
-              <span className="mono">{zoom.title}</span>
-              <button className="ghost sm" onClick={() => setZoom(null)}>close ✕</button>
+      {zoom !== null && allCrops[zoom] && (() => {
+        const crop = allCrops[zoom];
+        const ex = extractionByKey.get(`${crop.page}/${crop.name}`);
+        return (
+          <div className="lightbox" onClick={() => setZoom(null)}>
+            <div className="lightbox-inner" onClick={(e) => e.stopPropagation()}>
+              <div className="lightbox-bar">
+                <span className="mono">
+                  page {crop.page} · {crop.name}
+                </span>
+                <span className="muted small">{zoom + 1} / {allCrops.length}</span>
+                <button className="ghost sm" onClick={() => setZoom(null)}>close ✕</button>
+              </div>
+              <div className="lightbox-body">
+                <button
+                  className="lightbox-arrow left"
+                  disabled={zoom === 0}
+                  onClick={() => setZoom(zoom - 1)}
+                  aria-label="Previous image"
+                >
+                  ‹
+                </button>
+                <img src={crop.url} alt={crop.name} />
+                <button
+                  className="lightbox-arrow right"
+                  disabled={zoom === allCrops.length - 1}
+                  onClick={() => setZoom(zoom + 1)}
+                  aria-label="Next image"
+                >
+                  ›
+                </button>
+              </div>
+              {ex && (
+                <div className="lightbox-extraction">
+                  {ELEMENTS.map((el) => {
+                    const items = ex[el];
+                    if (!items?.length) return null;
+                    return (
+                      <div key={el} className="lightbox-extract-group">
+                        <span className={`lightbox-extract-dot dot el-${el.toLowerCase()}`} />
+                        <span className={`lightbox-extract-label el-${el.toLowerCase()}`}>{el}</span>
+                        <div className="lightbox-extract-chips">
+                          {items.map((item, i) => (
+                            <span key={i} className={`pill el-${el.toLowerCase()}`}>
+                              <span className="pill-label">{item.label}</span>
+                              <span className="pill-count">x{item.count}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {ELEMENTS.every((el) => !ex[el]?.length) && (
+                    <div className="lightbox-empty">No labels detected</div>
+                  )}
+                </div>
+              )}
+              {!ex && (
+                <div className="lightbox-extraction">
+                  <div className="lightbox-loading">
+                    <span className="spinner" />
+                    <span>Extracting…</span>
+                  </div>
+                </div>
+              )}
             </div>
-            <img src={zoom.url} alt={zoom.title} />
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

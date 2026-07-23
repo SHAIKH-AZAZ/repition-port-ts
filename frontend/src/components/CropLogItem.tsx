@@ -14,7 +14,7 @@ export function CropLogItem({
 }: {
   crop: Extract<AnalysisEvent, { type: "crop" }>;
   extraction?: TileExtraction;
-  onZoom: (url: string, title: string) => void;
+  onZoom: () => void;
 }) {
   const [showJson, setShowJson] = useState(false);
   const chips = extraction ? toChips(extraction) : null;
@@ -22,7 +22,7 @@ export function CropLogItem({
 
   return (
     <div className="crop-item">
-      <button className="thumb" onClick={() => onZoom(crop.url, title)} title="Click to enlarge">
+      <button className="thumb" onClick={() => onZoom()} title="Click to enlarge">
         <img src={crop.url} alt={crop.name} loading="lazy" />
       </button>
       <div className="crop-body">

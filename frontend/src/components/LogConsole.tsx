@@ -7,10 +7,12 @@ type Filter = "all" | "crops" | "status";
 /** Live event stream: status lines + compact crop cards (with lightbox). */
 export function LogConsole({
   events,
+  allCrops,
   onZoom,
 }: {
   events: AnalysisEvent[];
-  onZoom: (url: string, title: string) => void;
+  allCrops: Extract<AnalysisEvent, { type: "crop" }>[];
+  onZoom: (index: number) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -67,24 +69,38 @@ export function LogConsole({
           switch (e.type) {
             case "job":
               return (
-                <div key={i} className="line info">
-                  ▶ {e.file} — {e.totalPages} page(s), <b>{e.mode}</b> mode
+                <div key={i} className="line line-job">
+                  <span className="line-icon">▶</span>
+                  <span className="line-content">
+                    <span className="line-file">{e.file}</span> — {e.totalPages} page(s), <b>{e.mode}</b> mode
+                  </span>
                 </div>
               );
             case "status":
-              return <div key={i} className="line">· {e.message}</div>;
+              return (
+                <div key={i} className="line line-status">
+                  <span className="line-icon">·</span>
+                  <span className="line-content">{e.message}</span>
+                </div>
+              );
             case "page-start":
               return (
-                <div key={i} className="line">
-                  — Page {e.page}: {e.tiles} tile(s)
-                  {e.blankSkipped ? ` (${e.blankSkipped} blank skipped)` : ""}
+                <div key={i} className="line line-page">
+                  <span className="line-icon">—</span>
+                  <span className="line-content">
+                    Page {e.page}: {e.tiles} tile(s)
+                    {e.blankSkipped ? <span className="line-dim"> ({e.blankSkipped} blank skipped)</span> : ""}
+                  </span>
                 </div>
               );
             case "regions":
               return (
-                <div key={i} className="line">
-                  ✂ Page {e.page}: cropper chose {e.regions.length} region(s) —{" "}
-                  {e.regions.map((r) => r.label).join(", ")}
+                <div key={i} className="line line-crop">
+                  <span className="line-icon">✂</span>
+                  <span className="line-content">
+                    Page {e.page}: cropper chose {e.regions.length} region(s) —{" "}
+                    <span className="line-dim">{e.regions.map((r) => r.label).join(", ")}</span>
+                  </span>
                 </div>
               );
             case "crop":
@@ -93,21 +109,42 @@ export function LogConsole({
                   key={i}
                   crop={e}
                   extraction={extractionByKey.get(`${e.page}/${e.name}`)}
-                  onZoom={onZoom}
+                  onZoom={() => {
+                    const idx = allCrops.findIndex((c) => c.page === e.page && c.name === e.name);
+                    if (idx !== -1) onZoom(idx);
+                  }}
                 />
               );
             case "page-result":
-              return <div key={i} className="line ok">✓ Page {e.page} complete</div>;
+              return (
+                <div key={i} className="line line-success">
+                  <span className="line-icon">✓</span>
+                  <span className="line-content">Page {e.page} complete</span>
+                </div>
+              );
             case "page-error":
-              return <div key={i} className="line err">✗ Page {e.page}: {e.message}</div>;
+              return (
+                <div key={i} className="line line-error">
+                  <span className="line-icon">✗</span>
+                  <span className="line-content">Page {e.page}: {e.message}</span>
+                </div>
+              );
             case "done":
               return (
-                <div key={i} className="line ok">
-                  ■ Finished{e.errors ? ` (${e.errors} page error(s))` : ""}.
+                <div key={i} className="line line-done">
+                  <span className="line-icon">■</span>
+                  <span className="line-content">
+                    Finished{e.errors ? <span className="line-dim"> ({e.errors} page error(s))</span> : ""}.
+                  </span>
                 </div>
               );
             case "error":
-              return <div key={i} className="line err">Error: {e.message}</div>;
+              return (
+                <div key={i} className="line line-error">
+                  <span className="line-icon">⚠</span>
+                  <span className="line-content">Error: {e.message}</span>
+                </div>
+              );
             default:
               return null;
           }

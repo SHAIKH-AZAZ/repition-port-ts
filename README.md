@@ -4,6 +4,21 @@ Direct port of the Python POC. Scans `input/` PDFs, sends each page to an OpenAI
 vision model, extracts BEAM / SLAB / COLUMN / FOOTING label repetitions, and
 writes a per-file JSON report to `output/`.
 
+> **Web UI (in progress):** a browser app to upload a PDF, preview it, watch
+> extraction stream live (crop images + their JSON), and see a results table.
+> The pipeline core is exposed as an event emitter (`src/analysis.ts`,
+> `runAnalysis(pdf, opts, emit)`); the CLI and the Feathers backend both consume
+> it. See `docs/ui-implementation-plan.md`, then `backend/` and `frontend/`.
+>
+> Quick start (three pieces):
+> ```bash
+> # 1) pipeline keys live in the repo-root .env (used by CLI + backend)
+> # 2) backend (Feathers, :4000)
+> cd backend && npm install && npm run dev
+> # 3) frontend (React+Vite, :5173) — in another terminal
+> cd frontend && npm install && npm run dev
+> ```
+
 ## Setup
 
 ```bash

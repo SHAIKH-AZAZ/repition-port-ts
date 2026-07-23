@@ -31,6 +31,11 @@ export interface PageTile {
   height: number;
   /** Base64-encoded PNG of the crop. */
   b64: string;
+  /**
+   * Relative artifact path (no extension) for debug saving, assigned by the
+   * pipeline, e.g. "r0_plan-top-left/tile_2" or "tile_5". Optional.
+   */
+  artifactName?: string;
 }
 
 /** All tiles for one page. */

@@ -57,6 +57,32 @@ If the cropper returns no regions or errors on a page, that page falls back to
 whole-page tiling automatically. Relevant tunables live in `src/config.ts`
 (`CROP_PAGE_MAX_DIM`, `MAX_CROP_CALLS`, `CROP_PROMPT`).
 
+### Per-crop artifacts (images + JSON)
+
+Every run also saves each cropped image next to the JSON extracted from it, so
+you can see exactly what was sent to the model and what it read back. Artifacts
+are written beside the summary report, under `output/<pdf>_crops/`:
+
+```
+output/
+  drawing_elements.json              ← final aggregated summary
+  drawing_crops/
+    page_1/
+      regions.json                   ← regions the cropper chose (agentic mode)
+      r0_plan-top-left/
+        tile_0.png                   ← the cropped image
+        tile_0.json                  ← raw extraction from that crop
+        tile_1.png / tile_1.json
+      r1_section-a/
+        tile_0.png / tile_0.json
+      page_result.json               ← merged + cleaned result for the page
+    page_2/
+      ...
+```
+
+In grid mode (cropper disabled) tiles are stored flat as `page_N/tile_<i>.png`
+and `page_N/tile_<i>.json`. Set `SAVE_ARTIFACTS=0` in `.env` to turn this off.
+
 ## Layout ↔ Python source
 
 | TypeScript                | Python                |

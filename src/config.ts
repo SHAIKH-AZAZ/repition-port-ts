@@ -96,6 +96,15 @@ export const DROP_DIMENSION_MERGES = true;
 // ── Output ────────────────────────────────────────────────────────────────────
 export const DEFAULT_OUTPUT_SUFFIX = "_elements.json";
 
+// ── Debug artifacts (per-crop images + JSON) ──────────────────────────────────
+// When enabled, every crop tile image and its RAW extraction JSON are written
+// to  output/<pdf>_crops/page_<n>/...  together with the cropper's chosen
+// regions and the merged page result. Lets you inspect exactly what each crop
+// looked like and what was read from it. Set SAVE_ARTIFACTS=0 to turn off.
+export const SAVE_ARTIFACTS = (process.env.SAVE_ARTIFACTS ?? "1") !== "0";
+// Folder suffix (next to the summary JSON) that holds the crop artifacts.
+export const ARTIFACTS_SUFFIX = "_crops";
+
 // ── Cropper Prompt (agentic, strong model) ────────────────────────────────────
 // Sent with a DOWNSCALED full-page image to the cropper model. The model must
 // call the crop_region tool for every region worth reading, then finish.

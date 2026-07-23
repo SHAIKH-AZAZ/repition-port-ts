@@ -34,6 +34,8 @@ import {
   TILE_CONCURRENCY,
   OPENAI_CROP_MODEL,
   CROP_PAGE_MAX_DIM,
+  SAVE_ARTIFACTS,
+  ARTIFACTS_SUFFIX,
 } from "./config.js";
 import {
   pdfToPageTiles,
@@ -44,10 +46,22 @@ import {
 } from "./pdfProcessor.js";
 import type { PageTile, PixelRect } from "./pdfProcessor.js";
 import { cropPage } from "./cropper.js";
+import type { CropRegion } from "./cropper.js";
 import { extractElementsFromImage, emptyResult } from "./aiExtractor.js";
 import { mergeTileExtractions } from "./postProcess.js";
 import type { TileResult } from "./postProcess.js";
+import {
+  ensurePageDir,
+  saveRegions,
+  saveTileArtifacts,
+  savePageResult,
+} from "./artifacts.js";
 import type { PageError, PageResult, Summary } from "./types.js";
+
+/** Turn a region label into a filesystem-safe folder name. */
+function safeName(label: string): string {
+  return label.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "region";
+}
 
 /** One page's tiles ready for extraction, from either pipeline. */
 interface PageWork {
@@ -57,6 +71,8 @@ interface PageWork {
   tiles: PageTile[];
   /** Grid positions before blank-skipping (grid mode only). */
   gridTiles?: number;
+  /** Cropper regions (agentic mode only) — saved for debugging. */
+  regions?: CropRegion[];
 }
 
 /**
@@ -74,43 +90,58 @@ async function* producePageWork(
     for await (const page of pdfToPages(pdfPath)) {
       if (!pageSet.has(page.page)) continue; // don't spend cropper calls on skipped pages
 
-      let tiles: PageTile[] = [];
+      const wholePage: PixelRect = {
+        left: 0,
+        top: 0,
+        width: page.pageWidth,
+        height: page.pageHeight,
+      };
+      const tiles: PageTile[] = [];
+      let regions: CropRegion[] = [];
+
       try {
         const preview = await encodePagePreview(page, CROP_PAGE_MAX_DIM);
-        const regions = await cropPage(page.page, preview);
+        regions = await cropPage(page.page, preview);
         if (regions.length === 0) {
-          tiles = await tilesFromRegion(page, {
-            left: 0,
-            top: 0,
-            width: page.pageWidth,
-            height: page.pageHeight,
-          });
+          // Nothing cropped — read the whole page as a fallback.
+          const ft = await tilesFromRegion(page, wholePage);
+          ft.forEach((t, i) => (t.artifactName = `fullpage/tile_${i}`));
+          tiles.push(...ft);
         } else {
-          for (const r of regions) {
+          for (let ri = 0; ri < regions.length; ri++) {
+            const r = regions[ri];
             const rect: PixelRect = {
               left: r.x1 * page.pageWidth,
               top: r.y1 * page.pageHeight,
               width: (r.x2 - r.x1) * page.pageWidth,
               height: (r.y2 - r.y1) * page.pageHeight,
             };
-            tiles.push(...(await tilesFromRegion(page, rect)));
+            const rt = await tilesFromRegion(page, rect);
+            const folder = `r${ri}_${safeName(r.label)}`;
+            rt.forEach((t, ti) => (t.artifactName = `${folder}/tile_${ti}`));
+            tiles.push(...rt);
           }
         }
       } catch (exc) {
         const msg = exc instanceof Error ? exc.message : String(exc);
         console.log(`\n  [Page ${page.page}] cropper stage failed (${msg}); tiling whole page.`);
-        tiles = await tilesFromRegion(page, {
-          left: 0,
-          top: 0,
-          width: page.pageWidth,
-          height: page.pageHeight,
-        });
+        regions = [];
+        const ft = await tilesFromRegion(page, wholePage);
+        ft.forEach((t, i) => (t.artifactName = `fullpage/tile_${i}`));
+        tiles.push(...ft);
       }
 
-      yield { page: page.page, pageWidth: page.pageWidth, pageHeight: page.pageHeight, tiles };
+      yield {
+        page: page.page,
+        pageWidth: page.pageWidth,
+        pageHeight: page.pageHeight,
+        tiles,
+        regions,
+      };
     }
   } else {
     for await (const pageTiles of pdfToPageTiles(pdfPath)) {
+      pageTiles.tiles.forEach((t) => (t.artifactName = `tile_${t.index}`));
       yield {
         page: pageTiles.page,
         pageWidth: pageTiles.pageWidth,
@@ -176,6 +207,15 @@ async function analyzePdf(
   const perPageResults: PageResult[] = [];
   const errors: PageError[] = [];
 
+  // Per-crop debug artifacts (images + JSON) land next to the summary JSON.
+  const stem = path.basename(pdfPath, path.extname(pdfPath));
+  const artifactsBase = SAVE_ARTIFACTS
+    ? path.join(OUTPUT_DIR, stem + ARTIFACTS_SUFFIX)
+    : null;
+  if (artifactsBase) {
+    console.log(`  Crops  : saving per-crop images + JSON -> ${artifactsBase}`);
+  }
+
   let done = 0;
   for await (const work of producePageWork(pdfPath, pagesToProcessSet)) {
     const pageNum = work.page;
@@ -191,12 +231,22 @@ async function analyzePdf(
         "\n",
     );
 
+    // Prepare this page's artifact folder and dump the cropper regions.
+    const pageArt = artifactsBase ? ensurePageDir(artifactsBase, pageNum) : null;
+    if (pageArt && work.regions) {
+      saveRegions(pageArt, work.regions);
+    }
+
     try {
       const tileResults: TileResult[] = await mapWithConcurrency(
         work.tiles,
         TILE_CONCURRENCY,
         async (tile: PageTile, i: number) => {
           const extraction = await extractElementsFromImage(pageNum, tile.b64);
+          // Save the crop image next to the raw JSON it produced.
+          if (pageArt && tile.artifactName) {
+            saveTileArtifacts(pageArt, tile.artifactName, tile.b64, extraction);
+          }
           process.stderr.write(
             `\r  Page ${pageNum} tiles [${i + 1}/${work.tiles.length}]`,
           );
@@ -208,6 +258,9 @@ async function analyzePdf(
         work.pageWidth,
         work.pageHeight,
       );
+      if (pageArt) {
+        savePageResult(pageArt, elements);
+      }
       perPageResults.push({ page: pageNum, elements });
     } catch (exc) {
       const errMsg = exc instanceof Error ? exc.message : String(exc);
